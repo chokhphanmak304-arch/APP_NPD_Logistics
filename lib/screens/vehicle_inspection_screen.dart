@@ -29,11 +29,32 @@ class _VehicleInspectionScreenState extends State<VehicleInspectionScreen> {
   final TextEditingController _generalNoteController = TextEditingController();
   bool _isSubmitting = false;
 
+  // 🆕 ฟิลด์สำหรับเลือกรถ
+  List<Map<String, dynamic>> _vehicles = [];
+  Map<String, dynamic>? _selectedVehicle;
+  bool _isLoadingVehicles = true;
+
   @override
   void initState() {
     super.initState();
     _initInspectionItems();
     _initMaintenanceItems();
+    _loadVehicles();  // 🆕 โหลดรายการรถ
+  }
+
+  // 🆕 โหลดรายการรถ
+  Future<void> _loadVehicles() async {
+    setState(() => _isLoadingVehicles = true);
+    try {
+      final vehicles = await _odooService.getVehiclesForInspection();
+      setState(() {
+        _vehicles = vehicles;
+        _isLoadingVehicles = false;
+      });
+    } catch (e) {
+      print('❌ Error loading vehicles: $e');
+      setState(() => _isLoadingVehicles = false);
+    }
   }
 
   void _initMaintenanceItems() {
@@ -138,6 +159,14 @@ class _VehicleInspectionScreenState extends State<VehicleInspectionScreen> {
   }
 
   Future<void> _submitInspection() async {
+    // 🆕 ตรวจสอบว่าเลือกรถหรือยัง
+    if (_selectedVehicle == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('กรุณาเลือกป้ายทะเบียนรถ'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+
     // ตรวจสอบว่าติ๊กถูกครบทุกข้อหรือไม่
     final uncheckedItems = _inspectionItems.where((item) => !item.isChecked).toList();
     final unselectedMaintenance = _maintenanceItems.where((item) => item.isDue == null).toList();
@@ -206,7 +235,7 @@ class _VehicleInspectionScreenState extends State<VehicleInspectionScreen> {
         'lastChangeMileage': item.lastChangeMileage,
       }).toList();
 
-      // 🚀 ส่งข้อมูลไป Odoo
+      // 🚀 ส่งข้อมูลไป Odoo (🆕 เพิ่ม vehicleId และ categoryId)
       final result = await _odooService.submitVehicleInspection(
         driverId: widget.driver.id,
         driverName: widget.driver.name,
@@ -215,6 +244,8 @@ class _VehicleInspectionScreenState extends State<VehicleInspectionScreen> {
         inspectionLines: inspectionLines,
         maintenanceLines: maintenanceLines,
         generalNote: _generalNoteController.text,
+        vehicleId: _selectedVehicle!['id'],  // 🆕
+        categoryId: _selectedVehicle!['category_id'],  // 🆕
       );
 
       if (mounted) {
@@ -272,6 +303,9 @@ class _VehicleInspectionScreenState extends State<VehicleInspectionScreen> {
       ),
       body: Column(
         children: [
+          // 🆕 ส่วนเลือกรถและประเภทรถ
+          _buildVehicleSelector(),
+          
           // Progress indicator
           Container(
             padding: const EdgeInsets.all(16),
@@ -350,6 +384,132 @@ class _VehicleInspectionScreenState extends State<VehicleInspectionScreen> {
       bottomNavigationBar: CustomBottomNavBar(
         currentIndex: 0,
         driver: widget.driver,
+      ),
+    );
+  }
+
+  // 🆕 Widget เลือกป้ายทะเบียนรถและแสดงประเภทรถ (Style เหมือนฟอร์มเดิม)
+  Widget _buildVehicleSelector() {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      elevation: 3,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(
+          color: _selectedVehicle != null ? Colors.green.shade300 : Colors.blue.shade300, 
+          width: _selectedVehicle != null ? 2 : 1,
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ป้ายทะเบียนรถ
+            Text('ป้ายทะเบียนรถ *', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey.shade700)),
+            const SizedBox(height: 6),
+            _isLoadingVehicles
+                ? Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                        SizedBox(width: 12),
+                        Text('กำลังโหลดรายการรถ...'),
+                      ],
+                    ),
+                  )
+                : Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: _selectedVehicle != null ? Colors.green : Colors.grey.shade400),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<Map<String, dynamic>>(
+                        value: _selectedVehicle,
+                        hint: Text('เลือกป้ายทะเบียนรถ', style: TextStyle(fontSize: 14, color: Colors.grey.shade500)),
+                        isExpanded: true,
+                        icon: Icon(Icons.arrow_drop_down, color: _selectedVehicle != null ? Colors.green : Colors.grey),
+                        items: _vehicles.map((vehicle) {
+                          return DropdownMenuItem<Map<String, dynamic>>(
+                            value: vehicle,
+                            child: Row(
+                              children: [
+                                Icon(Icons.local_shipping, size: 18, color: Colors.blue.shade700),
+                                const SizedBox(width: 8),
+                                Text(vehicle['license_plate'] ?? '-', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          setState(() {
+                            _selectedVehicle = value;
+                          });
+                        },
+                      ),
+                    ),
+                  ),
+            
+            const SizedBox(height: 16),
+            
+            // ประเภทรถ (แสดงอัตโนมัติ)
+            Text('ประเภทรถ (หมวดหมู่) *', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey.shade700)),
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              decoration: BoxDecoration(
+                color: _selectedVehicle != null 
+                    ? (_selectedVehicle!['category_name']?.isNotEmpty == true ? Colors.green.shade50 : Colors.orange.shade50)
+                    : Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _selectedVehicle != null 
+                      ? (_selectedVehicle!['category_name']?.isNotEmpty == true ? Colors.green : Colors.orange)
+                      : Colors.grey.shade400,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    _selectedVehicle != null 
+                        ? (_selectedVehicle!['category_name']?.isNotEmpty == true ? Icons.category : Icons.warning_amber)
+                        : Icons.help_outline,
+                    size: 20,
+                    color: _selectedVehicle != null 
+                        ? (_selectedVehicle!['category_name']?.isNotEmpty == true ? Colors.green.shade700 : Colors.orange.shade700)
+                        : Colors.grey,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _selectedVehicle != null 
+                          ? (_selectedVehicle!['category_name']?.isNotEmpty == true 
+                              ? _selectedVehicle!['category_name'] 
+                              : '⚠️ รถนี้ยังไม่ได้กำหนดประเภท')
+                          : 'กรุณาเลือกป้ายทะเบียนรถก่อน',
+                      style: TextStyle(
+                        color: _selectedVehicle != null 
+                            ? (_selectedVehicle!['category_name']?.isNotEmpty == true ? Colors.green.shade900 : Colors.orange.shade900)
+                            : Colors.grey.shade600,
+                        fontWeight: _selectedVehicle != null ? FontWeight.bold : FontWeight.normal,
+                        fontSize: 14,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

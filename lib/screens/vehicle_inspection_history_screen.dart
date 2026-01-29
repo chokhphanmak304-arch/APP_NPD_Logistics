@@ -137,6 +137,11 @@ class _VehicleInspectionHistoryScreenState extends State<VehicleInspectionHistor
     final issueCount = item['issue_count'] ?? 0;
     final checkedItems = item['checked_items'] ?? 0;
     final totalItems = item['total_items'] ?? 0;
+    // 🆕 แก้ไข: ตรวจสอบว่าเป็น String หรือไม่ (Odoo ส่ง false มาเมื่อไม่มีค่า)
+    final licensePlate = (item['license_plate'] is String && item['license_plate'].toString().isNotEmpty) 
+        ? item['license_plate'] : '-';
+    final categoryName = (item['category_name'] is String && item['category_name'].toString().isNotEmpty) 
+        ? item['category_name'] : '-';
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -177,6 +182,53 @@ class _VehicleInspectionHistoryScreenState extends State<VehicleInspectionHistor
                 ],
               ),
               const SizedBox(height: 12),
+              
+              // 🆕 ป้ายทะเบียนและประเภทรถ
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.shade200),
+                ),
+                child: Row(
+                  children: [
+                    // ป้ายทะเบียน
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Icon(Icons.directions_car, size: 16, color: Colors.blue.shade700),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              licensePlate,
+                              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue.shade900, fontSize: 14),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // ประเภทรถ
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Icon(Icons.category, size: 16, color: Colors.purple.shade700),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              categoryName,
+                              style: TextStyle(color: Colors.purple.shade900, fontSize: 12),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
               
               // Date row
               Row(
@@ -308,6 +360,11 @@ class _VehicleInspectionHistoryScreenState extends State<VehicleInspectionHistor
   void _showDetailBottomSheet(Map<String, dynamic> detail) {
     final inspectionLines = detail['inspection_lines'] as List? ?? [];
     final maintenanceLines = detail['maintenance_lines'] as List? ?? [];
+    // 🆕 แก้ไข: ตรวจสอบว่าเป็น String หรือไม่ (Odoo ส่ง false มาเมื่อไม่มีค่า)
+    final licensePlate = (detail['license_plate'] is String && detail['license_plate'].toString().isNotEmpty) 
+        ? detail['license_plate'] : '-';
+    final categoryName = (detail['category_name'] is String && detail['category_name'].toString().isNotEmpty) 
+        ? detail['category_name'] : '-';
 
     showModalBottomSheet(
       context: context,
@@ -357,7 +414,60 @@ class _VehicleInspectionHistoryScreenState extends State<VehicleInspectionHistor
                   ],
                 ),
               ),
-              const Divider(height: 24),
+              // 🆕 ข้อมูลรถ
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: Row(
+                          children: [
+                            Icon(Icons.directions_car, size: 18, color: Colors.blue.shade700),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('ป้ายทะเบียน', style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
+                                  Text(licensePlate, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue.shade900, fontSize: 12), overflow: TextOverflow.ellipsis, maxLines: 2),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(width: 1, height: 30, color: Colors.blue.shade200, margin: const EdgeInsets.symmetric(horizontal: 8)),
+                      Expanded(
+                        flex: 2,
+                        child: Row(
+                          children: [
+                            Icon(Icons.category, size: 18, color: Colors.purple.shade700),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('ประเภทรถ', style: TextStyle(fontSize: 10, color: Colors.grey.shade600)),
+                                  Text(categoryName, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.purple.shade900, fontSize: 12), overflow: TextOverflow.ellipsis),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const Divider(height: 16),
               // Content
               Expanded(
                 child: ListView(

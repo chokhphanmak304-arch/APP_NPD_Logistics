@@ -1507,6 +1507,8 @@ class OdooService {
     required List<Map<String, dynamic>> inspectionLines,
     required List<Map<String, dynamic>> maintenanceLines,
     required String generalNote,
+    int? vehicleId,  // 🆕 เพิ่ม vehicle_id
+    int? categoryId,  // 🆕 เพิ่ม category_id
   }) async {
     try {
       print('🚗 [OdooService] Submitting vehicle inspection...');
@@ -1527,6 +1529,8 @@ class OdooService {
         'driver_id': driverId,
         'branch_id': branchId,
         'general_note': generalNote,
+        if (vehicleId != null) 'vehicle_id': vehicleId,  // 🆕 เพิ่ม vehicle_id
+        if (categoryId != null) 'category_id': categoryId,  // 🆕 เพิ่ม category_id
         'inspection_line_ids': inspectionLines.map((line) => [0, 0, {
           'item_no': line['id'],
           'name': line['title'],
@@ -1624,7 +1628,8 @@ class OdooService {
               'fields': [
                 'id', 'name', 'inspection_date', 'inspection_date_thai',
                 'driver_name', 'branch_id', 'state', 
-                'total_items', 'checked_items', 'issue_count', 'general_note'
+                'total_items', 'checked_items', 'issue_count', 'general_note',
+                'vehicle_id', 'license_plate', 'category_id', 'category_name'
               ],
               'order': 'inspection_date desc',
               'limit': 50,
@@ -1678,7 +1683,8 @@ class OdooService {
               'fields': [
                 'id', 'name', 'inspection_date', 'inspection_date_thai',
                 'driver_name', 'branch_id', 'state', 'general_note',
-                'inspection_line_ids', 'maintenance_line_ids'
+                'inspection_line_ids', 'maintenance_line_ids',
+                'vehicle_id', 'license_plate', 'category_id', 'category_name'
               ],
             },
           },
@@ -1756,6 +1762,172 @@ class OdooService {
     } catch (e) {
       print('❌ [OdooService] Exception: $e');
       return null;
+    }
+  }
+
+  // ==================== 🚗 Vehicle List for Inspection ====================
+  
+  /// 📝 ดึงรายการรถสำหรับเลือกในการตรวจสอบ (กรอง "ไม่มีทะเบียน" ออก)
+  Future<List<Map<String, dynamic>>> getVehiclesForInspection() async {
+    try {
+      print('🚗 [OdooService] Fetching vehicles for inspection...');
+
+      if (!_isSessionValid()) {
+        print('🔐 [OdooService] Session invalid, re-authenticating...');
+        await authenticate();
+      }
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/web/dataset/call_kw'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': 'session_id=$_sessionId',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'call',
+          'params': {
+            'model': 'fleet.vehicle',
+            'method': 'search_read',
+            'args': [
+              [['license_plate', '!=', 'ไม่มีทะเบียน'], ['license_plate', '!=', false]],
+            ],
+            'kwargs': {
+              'fields': ['id', 'name', 'license_plate', 'category_id'],  // 🆕 ดึง category_id โดยตรง
+              'order': 'license_plate asc',
+            },
+          },
+          'id': Random().nextInt(1000000),
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final result = jsonDecode(response.body);
+        if (result['result'] != null) {
+          final List<dynamic> vehicles = result['result'];
+          print('✅ [OdooService] Found ${vehicles.length} vehicles');
+          
+          // 🆕 ดึง category_id โดยตรงจาก fleet.vehicle
+          List<Map<String, dynamic>> vehiclesWithCategory = [];
+          for (var vehicle in vehicles) {
+            int? categoryId;
+            String categoryName = '';
+            
+            // category_id เป็น Many2one จะได้ [id, name] หรือ false
+            if (vehicle['category_id'] != null && vehicle['category_id'] is List && vehicle['category_id'].length >= 2) {
+              categoryId = vehicle['category_id'][0];
+              categoryName = vehicle['category_id'][1] ?? '';
+              print('   🚗 ${vehicle['license_plate']} -> Category: $categoryName (ID: $categoryId)');
+            }
+            
+            vehiclesWithCategory.add({
+              'id': vehicle['id'],
+              'name': vehicle['name'],
+              'license_plate': vehicle['license_plate'],
+              'category_id': categoryId,
+              'category_name': categoryName,
+            });
+          }
+          
+          return vehiclesWithCategory;
+        }
+      }
+      
+      print('❌ [OdooService] Failed to fetch vehicles');
+      return [];
+    } catch (e) {
+      print('❌ [OdooService] Exception: $e');
+      return [];
+    }
+  }
+
+  /// 📝 ดึง category จาก model_id
+  Future<Map<String, dynamic>?> _getVehicleCategoryByModelId(int modelId) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/web/dataset/call_kw'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': 'session_id=$_sessionId',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'call',
+          'params': {
+            'model': 'fleet.vehicle.model',
+            'method': 'read',
+            'args': [[modelId]],
+            'kwargs': {
+              'fields': ['category_id'],
+            },
+          },
+          'id': Random().nextInt(1000000),
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final result = jsonDecode(response.body);
+        if (result['result'] != null && result['result'].isNotEmpty) {
+          final model = result['result'][0];
+          if (model['category_id'] != null && model['category_id'] is List && model['category_id'].length > 0) {
+            return {
+              'id': model['category_id'][0],
+              'name': model['category_id'][1],
+            };
+          }
+        }
+      }
+      return null;
+    } catch (e) {
+      print('⚠️ [OdooService] Error getting category: $e');
+      return null;
+    }
+  }
+
+  /// 📝 ดึงรายการหมวดหมู่รถทั้งหมด
+  Future<List<Map<String, dynamic>>> getVehicleCategories() async {
+    try {
+      print('📂 [OdooService] Fetching vehicle categories...');
+
+      if (!_isSessionValid()) {
+        await authenticate();
+      }
+
+      final response = await http.post(
+        Uri.parse('$_baseUrl/web/dataset/call_kw'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': 'session_id=$_sessionId',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'method': 'call',
+          'params': {
+            'model': 'fleet.vehicle.model.category',
+            'method': 'search_read',
+            'args': [[]],
+            'kwargs': {
+              'fields': ['id', 'name'],
+              'order': 'name asc',
+            },
+          },
+          'id': Random().nextInt(1000000),
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final result = jsonDecode(response.body);
+        if (result['result'] != null) {
+          final List<dynamic> categories = result['result'];
+          print('✅ [OdooService] Found ${categories.length} categories');
+          return categories.cast<Map<String, dynamic>>();
+        }
+      }
+      
+      return [];
+    } catch (e) {
+      print('❌ [OdooService] Exception: $e');
+      return [];
     }
   }
 }
