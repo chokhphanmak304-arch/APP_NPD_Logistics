@@ -7,11 +7,12 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// ✅ โหลดค่า signing key จาก key.properties
+// ✅ โหลดค่า signing key จาก key.properties (ถ้ามี)
+val keyPropertiesFile = rootProject.file("key.properties")
+val hasKeyProperties = keyPropertiesFile.exists()
 val keyProperties = Properties().apply {
-    val keyFile = rootProject.file("key.properties")
-    if (keyFile.exists()) {
-        keyFile.inputStream().use { this.load(it) }
+    if (hasKeyProperties) {
+        keyPropertiesFile.inputStream().use { this.load(it) }
     }
 }
 
@@ -21,6 +22,8 @@ android {
     ndkVersion = "27.0.12077973"
 
     compileOptions {
+        // ✅ ต้องเปิดสำหรับ flutter_local_notifications
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
@@ -43,17 +46,24 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            storeFile = file(keyProperties.getProperty("storeFile"))
-            storePassword = keyProperties.getProperty("storePassword")
-            keyAlias = keyProperties.getProperty("keyAlias")
-            keyPassword = keyProperties.getProperty("keyPassword")
+        if (hasKeyProperties) {
+            create("release") {
+                storeFile = file(keyProperties.getProperty("storeFile"))
+                storePassword = keyProperties.getProperty("storePassword")
+                keyAlias = keyProperties.getProperty("keyAlias")
+                keyPassword = keyProperties.getProperty("keyPassword")
+            }
         }
     }
 
     buildTypes {
         getByName("release") {
-            signingConfig = signingConfigs.getByName("release")
+            // ใช้ release signing ถ้ามี key.properties ไม่งั้น fallback เป็น debug เพื่อให้ build ผ่าน
+            signingConfig = if (hasKeyProperties) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -67,4 +77,9 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // ✅ จำเป็นสำหรับ flutter_local_notifications (core library desugaring)
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

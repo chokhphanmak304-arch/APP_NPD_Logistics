@@ -1308,11 +1308,22 @@ class OdooService {
   // ✅ ดึงรายได้เดือนนี้
   Future<double> getCurrentMonthIncome(int driverId) async {
     try {
-      print('💰 [OdooService] Fetching current month income for driver: $driverId');
-      
+      print('💰 [OdooService] Fetching current cycle income for driver: $driverId');
+
+      // ✅ รอบจ่ายเงินปัจจุบัน: 25 ของเดือนก่อน ถึง 24 ของเดือนนี้
+      //    ถ้าวันนี้ >= 25 จะเข้าสู่รอบของ "เดือนถัดไป" แล้ว
       final now = DateTime.now();
-      final firstDay = DateTime(now.year, now.month, 1);
-      final lastDay = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+      late DateTime cycleStart;
+      late DateTime cycleEnd;
+      if (now.day >= 25) {
+        cycleStart = DateTime(now.year, now.month, 25);
+        cycleEnd = DateTime(now.year, now.month + 1, 24);
+      } else {
+        cycleStart = DateTime(now.year, now.month - 1, 25);
+        cycleEnd = DateTime(now.year, now.month, 24);
+      }
+      String fmtDate(DateTime d) =>
+          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
       if (_uid == null) {
         await authenticate();
@@ -1322,14 +1333,16 @@ class OdooService {
         'jsonrpc': '2.0',
         'method': 'call',
         'params': {
-          'model': 'delivery.history',
+          // ✅ ใช้ vehicle.booking + delivery_date + state=done (ตรงกับที่กรองใน Odoo)
+          'model': 'vehicle.booking',
           'method': 'search_read',
           'args': [],
           'kwargs': {
             'domain': [
               ['driver_id', '=', driverId],
-              ['completion_date', '>=', _formatDateTimeForOdoo(firstDay)],
-              ['completion_date', '<=', _formatDateTimeForOdoo(lastDay)],
+              ['state', '=', 'done'],
+              ['delivery_date', '>=', fmtDate(cycleStart)],
+              ['delivery_date', '<=', fmtDate(cycleEnd)],
             ],
             'fields': ['travel_expenses', 'daily_allowance'],  // ✅ เอาแค่ เที่ยว + เบี้ยเลี้ยง
           }
@@ -1379,6 +1392,88 @@ class OdooService {
     }
   }
 
+  // ✅ ดึง "รายการงาน" ในรอบจ่ายเงินปัจจุบัน (25 เดือนก่อน → 24 เดือนนี้)
+  //    คืนค่าเป็น list ของ {name, delivery_date, travel_expenses, daily_allowance}
+  Future<List<Map<String, dynamic>>> getCurrentCycleDeliveries(int driverId) async {
+    try {
+      final now = DateTime.now();
+      late DateTime cycleStart;
+      late DateTime cycleEnd;
+      if (now.day >= 25) {
+        cycleStart = DateTime(now.year, now.month, 25);
+        cycleEnd = DateTime(now.year, now.month + 1, 24);
+      } else {
+        cycleStart = DateTime(now.year, now.month - 1, 25);
+        cycleEnd = DateTime(now.year, now.month, 24);
+      }
+      String fmtDate(DateTime d) =>
+          '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+      if (_uid == null) {
+        await authenticate();
+      }
+
+      final queryBody = {
+        'jsonrpc': '2.0',
+        'method': 'call',
+        'params': {
+          'model': 'vehicle.booking',
+          'method': 'search_read',
+          'args': [],
+          'kwargs': {
+            'domain': [
+              ['driver_id', '=', driverId],
+              ['state', '=', 'done'],
+              ['delivery_date', '>=', fmtDate(cycleStart)],
+              ['delivery_date', '<=', fmtDate(cycleEnd)],
+            ],
+            'fields': ['name', 'delivery_date', 'travel_expenses', 'daily_allowance'],
+            'order': 'delivery_date desc',
+          }
+        },
+        'id': DateTime.now().millisecondsSinceEpoch,
+      };
+
+      final cleanBaseUrl = _baseUrl.endsWith('/') ? _baseUrl.substring(0, _baseUrl.length - 1) : _baseUrl;
+      final url = '$cleanBaseUrl/web/dataset/call_kw';
+
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+          if (_sessionId != null) 'Cookie': 'session_id=$_sessionId',
+        },
+        body: jsonEncode(queryBody),
+      );
+
+      if (response.statusCode != 200) {
+        return [];
+      }
+
+      final responseData = jsonDecode(response.body);
+      final result = responseData['result'];
+      if (result == null || result is! List) {
+        return [];
+      }
+
+      return result
+          .map<Map<String, dynamic>>((r) => {
+                'name': r['name'] ?? '-',
+                'delivery_date': r['delivery_date'] ?? '',
+                'travel_expenses': r['travel_expenses'] != null
+                    ? (r['travel_expenses'] as num).toDouble()
+                    : 0.0,
+                'daily_allowance': r['daily_allowance'] != null
+                    ? (r['daily_allowance'] as num).toDouble()
+                    : 0.0,
+              })
+          .toList();
+    } catch (e) {
+      print('❌ [OdooService] Error fetching current cycle deliveries: $e');
+      return [];
+    }
+  }
+
   // ✅ ดึงรายได้รายเดือน
   Future<List<IncomeData>> getMonthlyIncome(int driverId) async {
     try {
@@ -1388,18 +1483,24 @@ class OdooService {
         await authenticate();
       }
 
-      // ดึงข้อมูล delivery_history ทั้งหมดของคนขับ (รวมค่าเบี้ยเลี้ยงด้วย)
+      // ✅ ดึงจาก vehicle.booking โดยตรง (แหล่งเดียวกับที่กรองใน Odoo)
+      //    ใช้ delivery_date = "วันส่งจริง" (Date เวลาไทย) + สถานะ done = เสร็จสิ้น
+      //    เพื่อให้ยอดตรงกับที่กรองในระบบ Odoo เป๊ะ
       final queryBody = {
         'jsonrpc': '2.0',
         'method': 'call',
         'params': {
-          'model': 'delivery.history',
+          'model': 'vehicle.booking',
           'method': 'search_read',
           'args': [],
           'kwargs': {
-            'domain': [['driver_id', '=', driverId]],
-            'fields': ['completion_date', 'shipping_cost', 'travel_expenses', 'daily_allowance'],
-            'order': 'completion_date desc',
+            'domain': [
+              ['driver_id', '=', driverId],
+              ['state', '=', 'done'],
+              ['delivery_date', '!=', false],
+            ],
+            'fields': ['delivery_date', 'shipping_cost', 'travel_expenses', 'daily_allowance'],
+            'order': 'delivery_date desc',
           }
         },
         'id': DateTime.now().millisecondsSinceEpoch,
@@ -1433,9 +1534,27 @@ class OdooService {
 
       for (var record in responseData['result']) {
         try {
-          final completionDateStr = record['completion_date'] as String;
-          final date = DateTime.parse(completionDateStr + 'Z').toLocal();
-          final monthKey = '${date.year}-${date.month.toString().padLeft(2, '0')}';
+          // ✅ "วันส่งจริง" (delivery_date) เป็น Date เวลาไทยอยู่แล้ว (รูปแบบ YYYY-MM-DD)
+          //    ไม่ต้องแปลง timezone จึงไม่มีปัญหาขอบวันคลาดเคลื่อน
+          final deliveryRaw = record['delivery_date'];
+          if (deliveryRaw is! String || deliveryRaw.isEmpty) {
+            continue;
+          }
+          final date = DateTime.parse(deliveryRaw);
+
+          // ✅ รอบจ่ายเงิน: 25 ของเดือนก่อน ถึง 24 ของเดือนนี้
+          //    วันที่ >= 25 ให้นับเป็นรอบของ"เดือนถัดไป"
+          //    เช่น 25/05–24/06 = รอบเดือน 6 (มิถุนายน)
+          int cycleMonth = date.month;
+          int cycleYear = date.year;
+          if (date.day >= 25) {
+            cycleMonth += 1;
+            if (cycleMonth > 12) {
+              cycleMonth = 1;
+              cycleYear += 1;
+            }
+          }
+          final monthKey = '$cycleYear-${cycleMonth.toString().padLeft(2, '0')}';
 
           final shippingCost = record['shipping_cost'] != null 
               ? (record['shipping_cost'] as num).toDouble() 
@@ -1459,8 +1578,8 @@ class OdooService {
             );
           } else {
             incomeByMonth[monthKey] = IncomeData(
-              month: date.month,
-              year: date.year,
+              month: cycleMonth,
+              year: cycleYear,
               totalShippingCost: shippingCost,
               totalTravelExpenses: travelExpenses,
               totalDailyAllowance: dailyAllowance,

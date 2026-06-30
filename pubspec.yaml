@@ -1,7 +1,7 @@
 name: npd_transport_app
 description: "NPD Logistics - ระบบจัดการการขนส่ง"
 publish_to: 'none'
-version: 1.1.5+20  # 🆕 เพิ่มฟีเจอร์รายการตรวจสอบสภาพรถ
+version: 1.1.6+21  # 🆕 UI ใหม่ + แจ้งเตือนงาน + popup อัปเดต + รายได้ตามรอบ
 
 environment:
   sdk: ^3.8.0
@@ -56,7 +56,13 @@ dependencies:
   
   # ✅ NEW: Better file access handling
   file: ^7.0.0
-  
+
+  # 🔔 In-App Update (Google Play) - แจ้งเตือนเมื่อมีเวอร์ชันใหม่ที่ Google อนุมัติแล้ว
+  in_app_update: ^4.2.3
+
+  # 🔔 Local Notifications - แจ้งเตือนงานใหม่ขึ้นแถบแจ้งเตือนมือถือ
+  flutter_local_notifications: ^17.2.4
+
   cupertino_icons: ^1.0.6
 
 dev_dependencies:
