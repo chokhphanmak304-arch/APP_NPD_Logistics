@@ -11,6 +11,8 @@ import '../services/odoo_service.dart';
 import '../services/tracking_service.dart';
 import '../services/camera_protection_service.dart';  // 🛡️ เพิ่มการป้องกัน!
 import '../widgets/bottom_nav_bar.dart';
+import '../models/product_check.dart';
+import '../widgets/product_check_card.dart';
 
 class StartJobScreen extends StatefulWidget {
   final Booking booking;
@@ -38,10 +40,19 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
   bool _isDisposed = false;
   bool _isPickingImage = false;  // ✅ ป้องกันการถ่ายภาพซ้ำ
 
+  // ตรวจนับสินค้าก่อนถ่ายรูป
+  List<ProductCheckLine> _checkLines = [];
+  ProductCheckSummary? _checkSummary;
+  bool _loadingCheck = true;
+  bool _savingCheck = false;
+  // โหลดรายการไม่ได้ (เน็ตล่ม/เซิร์ฟเวอร์ตอบไม่ได้) ต่างจาก "ใบนี้ไม่มีสินค้า"
+  bool _checkLoadFailed = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);  // ✅ เพิ่ม
+    _loadProductCheck();
   }
 
   @override
@@ -77,6 +88,136 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
     }
   }
 
+  // ================= ตรวจนับสินค้า =================
+
+  Future<void> _loadProductCheck() async {
+    final data = await _odooService.getProductCheckLines(widget.booking.id);
+    if (_isDisposed || !mounted) return;
+    setState(() {
+      _loadingCheck = false;
+      if (data == null) {
+        // ยังไม่รู้ว่ามีสินค้าไหม จึงยังไม่ปลดล็อกกล้อง ให้ผู้ใช้กดลองใหม่
+        _checkLoadFailed = true;
+        return;
+      }
+      _checkLoadFailed = false;
+      _checkSummary = ProductCheckSummary.fromJson(data['summary'] ?? {});
+      _checkLines = (data['lines'] as List? ?? [])
+          .map((e) => ProductCheckLine.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+    });
+  }
+
+  void _markLine(ProductCheckLine line, bool isCorrect) {
+    setState(() {
+      line.checkState = isCorrect ? 'correct' : 'incorrect';
+      if (isCorrect) {
+        line.checkedQuantity = line.quantity;
+        line.note = '';
+      }
+    });
+    if (!isCorrect) {
+      // กดว่าไม่ถูกต้องแล้วต้องบอกทันทีว่านับได้เท่าไหร่ ไม่งั้นข้อมูลไม่มีประโยชน์
+      _askQuantity(line);
+    }
+  }
+
+  Future<void> _askQuantity(ProductCheckLine line) async {
+    final qtyController = TextEditingController(
+      text: line.checkedQuantity > 0 ? ProductCheckCard.fmt(line.checkedQuantity) : '',
+    );
+    final noteController = TextEditingController(text: line.note);
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('นับได้เท่าไหร่'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(line.productName,
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text('สั่งไว้ ${ProductCheckCard.fmt(line.quantity)} ${line.uom}',
+                style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+            const SizedBox(height: 16),
+            TextField(
+              controller: qtyController,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'จำนวนที่นับได้',
+                suffixText: line.uom,
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: noteController,
+              decoration: InputDecoration(
+                labelText: 'หมายเหตุ (ถ้ามี)',
+                hintText: 'เช่น ของชำรุด 2 ชิ้น',
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('ยกเลิก')),
+          ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('บันทึก')),
+        ],
+      ),
+    );
+    if (saved == true && mounted) {
+      setState(() {
+        line.checkedQuantity =
+            double.tryParse(qtyController.text.trim()) ?? 0;
+        line.note = noteController.text.trim();
+      });
+    }
+  }
+
+  Future<void> _saveProductCheck() async {
+    setState(() => _savingCheck = true);
+    final result = await _odooService.saveProductCheck(
+      bookingId: widget.booking.id,
+      driverId: widget.driver.id,
+      lines: _checkLines.map((l) => l.toPayload()).toList(),
+    );
+    if (_isDisposed || !mounted) return;
+    setState(() {
+      _savingCheck = false;
+      if (result != null) {
+        _checkSummary = ProductCheckSummary.fromJson(result['summary'] ?? {});
+      }
+    });
+    if (!mounted) return;
+    if (result == null) {
+      _showError('บันทึกผลตรวจไม่สำเร็จ ลองใหม่อีกครั้ง');
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_checkSummary?.canTakePhoto == true
+            ? 'บันทึกแล้ว ถ่ายรูปสินค้าได้เลย'
+            : 'บันทึกแล้ว'),
+        backgroundColor: const Color(0xFF16A34A),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  /// ถ่ายรูปได้เมื่อ Odoo บอกว่าตรวจครบแล้วเท่านั้น
+  /// แอปไม่ตัดสินเอง เพื่อไม่ให้ตรรกะอยู่สองที่แล้วเพี้ยนกัน
+  bool get _canTakePhoto => _checkSummary?.canTakePhoto ?? false;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -104,6 +245,11 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
             
             const SizedBox(height: 24),
             
+            // ตรวจนับสินค้า — ต้องทำก่อนจึงจะถ่ายรูปได้
+            if (_pickedImage == null) _buildProductCheckSection(),
+
+            if (_pickedImage == null) const SizedBox(height: 24),
+
             // ปุ่มถ่ายรูป
             if (_pickedImage == null) _buildCameraButtons(),
             
@@ -251,20 +397,74 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
     );
   }
 
+  Widget _buildProductCheckSection() {
+    if (_loadingCheck) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_checkLoadFailed) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFEF2F2),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFFECACA)),
+        ),
+        child: Column(
+          children: [
+            const Icon(Icons.wifi_off_rounded,
+                color: Color(0xFFDC2626), size: 32),
+            const SizedBox(height: 8),
+            const Text('โหลดรายการสินค้าไม่ได้',
+                style: TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text('ตรวจสัญญาณอินเทอร์เน็ตแล้วลองใหม่',
+                style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: () {
+                setState(() => _loadingCheck = true);
+                _loadProductCheck();
+              },
+              icon: const Icon(Icons.refresh, size: 18),
+              label: const Text('ลองใหม่'),
+            ),
+          ],
+        ),
+      );
+    }
+    // ใบที่ไม่มีรายการสินค้า ไม่ต้องแสดงการ์ดให้รก
+    if (_checkLines.isEmpty) return const SizedBox.shrink();
+    return ProductCheckCard(
+      lines: _checkLines,
+      summary: _checkSummary,
+      isSaving: _savingCheck,
+      onMark: _markLine,
+      onEditQuantity: _askQuantity,
+      onSave: _saveProductCheck,
+    );
+  }
+
   Widget _buildCameraButtons() {
     return SizedBox(
       width: double.infinity,
       height: 56,
       child: ElevatedButton.icon(
-        onPressed: () => _pickImage(ImageSource.camera),
-        icon: const Icon(Icons.camera_alt, size: 28),
-        label: const Text(
-          'เปิดกล้องถ่ายรูป',
-          style: TextStyle(fontSize: 18),
+        // ล็อกไว้จนกว่า Odoo จะยืนยันว่าตรวจนับครบแล้ว
+        onPressed: _canTakePhoto ? () => _pickImage(ImageSource.camera) : null,
+        icon: Icon(_canTakePhoto ? Icons.camera_alt : Icons.lock_outline,
+            size: 28),
+        label: Text(
+          _canTakePhoto ? 'เปิดกล้องถ่ายรูป' : 'ตรวจนับสินค้าให้ครบก่อน',
+          style: const TextStyle(fontSize: 18),
         ),
         style: ElevatedButton.styleFrom(
           backgroundColor: Colors.blue[700],
           foregroundColor: Colors.white,
+          disabledBackgroundColor: Colors.grey.shade300,
+          disabledForegroundColor: Colors.grey.shade600,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),

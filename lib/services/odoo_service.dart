@@ -938,6 +938,88 @@ class OdooService {
     }
   }
 
+  // ========== ตรวจนับสินค้าก่อนออกรถ ==========
+
+  /// ดึงรายการสินค้าของใบจอง พร้อมผลตรวจล่าสุดจากฝั่ง Odoo
+  ///
+  /// คืน null เมื่อเรียกไม่สำเร็จ เพื่อให้หน้าจอแยกออกระหว่าง
+  /// "ยังโหลดไม่ได้" กับ "ใบนี้ไม่มีรายการสินค้า" (total = 0)
+  Future<Map<String, dynamic>?> getProductCheckLines(int bookingId) async {
+    try {
+      if (_uid == null) {
+        await authenticate();
+      }
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/booking/product_lines'),
+        headers: {
+          'Content-Type': 'application/json',
+          if (_sessionId != null) 'Cookie': 'session_id=$_sessionId',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'params': {'booking_id': bookingId},
+        }),
+      );
+      if (response.statusCode != 200) {
+        print('❌ [ProductCheck] HTTP ${response.statusCode}');
+        return null;
+      }
+      final result = jsonDecode(response.body)['result'];
+      if (result == null || result['success'] != true) {
+        print('❌ [ProductCheck] ${result?['error']}');
+        return null;
+      }
+      return Map<String, dynamic>.from(result);
+    } catch (e) {
+      print('❌ [ProductCheck] ดึงรายการสินค้าไม่สำเร็จ: $e');
+      return null;
+    }
+  }
+
+  /// ส่งผลตรวจนับกลับไปเก็บที่ Odoo แล้วรับสรุปล่าสุดกลับมา
+  ///
+  /// ส่งทั้งใบในครั้งเดียว ไม่ยิงทีละรายการ เพราะคนขับอยู่หน้าคลัง
+  /// สัญญาณไม่ดี ยิงหลายครั้งมีโอกาสค้างกลางทางแล้วสถานะไม่ตรงกัน
+  Future<Map<String, dynamic>?> saveProductCheck({
+    required int bookingId,
+    required int driverId,
+    required List<Map<String, dynamic>> lines,
+  }) async {
+    try {
+      if (_uid == null) {
+        await authenticate();
+      }
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/booking/check_products'),
+        headers: {
+          'Content-Type': 'application/json',
+          if (_sessionId != null) 'Cookie': 'session_id=$_sessionId',
+        },
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'params': {
+            'booking_id': bookingId,
+            'driver_id': driverId,
+            'lines': lines,
+          },
+        }),
+      );
+      if (response.statusCode != 200) {
+        print('❌ [ProductCheck] บันทึกไม่สำเร็จ HTTP ${response.statusCode}');
+        return null;
+      }
+      final result = jsonDecode(response.body)['result'];
+      if (result == null || result['success'] != true) {
+        print('❌ [ProductCheck] ${result?['error']}');
+        return null;
+      }
+      return Map<String, dynamic>.from(result);
+    } catch (e) {
+      print('❌ [ProductCheck] บันทึกผลตรวจไม่สำเร็จ: $e');
+      return null;
+    }
+  }
+
   // ========== Tracking Methods ==========
 
   // ส่งตำแหน่งไปยัง Odoo - ใช้ Map<String, dynamic> เพื่อคืนข้อมูลเพิ่มเติม
