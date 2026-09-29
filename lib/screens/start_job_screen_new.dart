@@ -33,7 +33,13 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
   final TrackingService _trackingService = TrackingService();
   final ImagePicker _picker = ImagePicker();
   
-  File? _pickedImage;
+  // รูปสินค้าก่อนออกรถ เก็บได้หลายใบ คนขับต้องถ่ายหลายมุมเวลาของขาด
+  // หรือมีรอยเสียหาย รูปเดียวเถียงกันไม่จบว่าของครบตอนออกจากคลังไหม
+  final List<File> _photos = [];
+  static const int _maxPhotos = 10;
+
+  /// รูปแรก — โค้ดส่วนที่เหลือใช้ตัวนี้เช็คแค่ว่า "มีรูปแล้วหรือยัง"
+  File? get _pickedImage => _photos.isEmpty ? null : _photos.first;
   bool _isUploading = false;
   
   // ✅ เพิ่มตรงนี้
@@ -43,6 +49,20 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
   // ตรวจนับสินค้าก่อนถ่ายรูป
   List<ProductCheckLine> _checkLines = [];
   ProductCheckSummary? _checkSummary;
+
+  // เที่ยว "ส่งรถไปช่วยขนส่งอีกสาขา" ไม่มีของให้ตรวจ ใช้หมายเหตุแทน
+  // ฝั่ง Odoo เป็นคนบอกว่าเที่ยวไหนใช้แบบไหน แอปไม่เดาเองจากชื่อประเภท
+  final TextEditingController _noteController = TextEditingController();
+  bool _savingNote = false;
+
+  bool get _needsProductCheck => _checkSummary?.needsProductCheck ?? true;
+
+  /// สิ่งที่ต้องถ่ายในเที่ยวนี้ — เที่ยวช่วยสาขาไม่มีของ ถ่ายรถแทน
+  String get _photoSubject => _needsProductCheck ? 'รูปสินค้า' : 'รูปรถ';
+
+  String get _photoHint => _needsProductCheck
+      ? 'ให้เห็นสภาพสินค้าชัดเจน ถ้ามีของขาดให้ถ่ายให้เห็นด้วย'
+      : 'ถ่ายรถที่จะไปช่วยขนส่ง ให้เห็นป้ายทะเบียนชัดเจน';
   bool _loadingCheck = true;
   bool _savingCheck = false;
   // โหลดรายการไม่ได้ (เน็ตล่ม/เซิร์ฟเวอร์ตอบไม่ได้) ต่างจาก "ใบนี้ไม่มีสินค้า"
@@ -102,6 +122,10 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
       }
       _checkLoadFailed = false;
       _checkSummary = ProductCheckSummary.fromJson(data['summary'] ?? {});
+      // เติมหมายเหตุเดิมให้ คนขับจะได้แก้ต่อไม่ต้องพิมพ์ใหม่
+      if (_noteController.text.trim().isEmpty) {
+        _noteController.text = _checkSummary?.note ?? '';
+      }
       _checkLines = (data['lines'] as List? ?? [])
           .map((e) => ProductCheckLine.fromJson(Map<String, dynamic>.from(e)))
           .toList();
@@ -206,7 +230,7 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(_checkSummary?.canTakePhoto == true
-            ? 'บันทึกแล้ว ถ่ายรูปสินค้าได้เลย'
+            ? 'บันทึกแล้ว ถ่าย$_photoSubjectได้เลย'
             : 'บันทึกแล้ว'),
         backgroundColor: const Color(0xFF16A34A),
         behavior: SnackBarBehavior.floating,
@@ -222,9 +246,18 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('📸 ถ่ายรูปสินค้า'),
-        backgroundColor: Colors.blue[700],
+        title: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(_needsProductCheck
+              ? 'ตรวจสอบสินค้า/ถ่ายรูปสินค้า'
+              : 'หมายเหตุ/ถ่ายรูปรถ'),
+        ),
+        backgroundColor: const Color(0xFF1E40AF),
+        foregroundColor: Colors.white,
+        elevation: 0,
       ),
+      backgroundColor: const Color(0xFFF5F6F8),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -245,8 +278,11 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
             
             const SizedBox(height: 24),
             
-            // ตรวจนับสินค้า — ต้องทำก่อนจึงจะถ่ายรูปได้
-            if (_pickedImage == null) _buildProductCheckSection(),
+            // ตรวจนับสินค้า / หมายเหตุ — ต้องทำก่อนจึงจะถ่ายรูปได้
+            if (_pickedImage == null && _needsProductCheck)
+              _buildProductCheckSection(),
+            if (_pickedImage == null && !_needsProductCheck)
+              _buildHelpBranchNoteSection(),
 
             if (_pickedImage == null) const SizedBox(height: 24),
 
@@ -267,59 +303,214 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
   }
 
   Widget _buildJobInfoCard() {
-    return Card(
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '📋 ${widget.booking.name}',
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+    final b = widget.booking;
+    final hasCost = (b.shippingCost ?? 0) > 0 ||
+        (b.travelExpenses ?? 0) > 0 ||
+        (b.dailyAllowance ?? 0) > 0;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // หัวการ์ด - เลขที่จองเด่นที่สุด เพราะคนขับใช้อ้างอิงตลอดงาน
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            decoration: const BoxDecoration(
+              color: Color(0xFF1E40AF),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
             ),
-            const Divider(),
-            Text('📍 รับที่: ${widget.booking.pickupLocation ?? "-"}'),
-            const SizedBox(height: 4),
-            Text('🎯 ส่งที่: ${widget.booking.destination ?? "-"}'),
-            const SizedBox(height: 4),
-            Text('👤 ลูกค้า: ${widget.booking.partnerName ?? "-"}'),
-            const SizedBox(height: 4),
-            // ✅ วางแผนการออกเดินทาง
-            if (widget.booking.plannedStartDate != null)
-              Text('⏰ วางแผนออกเดินทาง: ${_formatDateTime(widget.booking.plannedStartDate!)}'),
-            const SizedBox(height: 4),
-            // ✅ เวลาออกเดินทางจริง (บันทึกจากแอป)
-            if (widget.booking.plannedStartDateT != null)
-              Text('⏱️ เวลาออกจริง: ${_formatDateTime(widget.booking.plannedStartDateT!)}', 
-                style: TextStyle(color: Colors.green[700], fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            // 💰 ค่าใช้จ่าย
-            if ((widget.booking.shippingCost != null && widget.booking.shippingCost! > 0) ||
-                (widget.booking.travelExpenses != null && widget.booking.travelExpenses! > 0) ||
-                (widget.booking.dailyAllowance != null && widget.booking.dailyAllowance! > 0))
-              Column(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'เลขที่จอง',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: Colors.white.withValues(alpha: 0.75),
+                    letterSpacing: 0.3,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  b.name,
+                  style: const TextStyle(
+                    fontSize: 19,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ต้นทางกับปลายทางอ่านเป็นคู่ จึงวางติดกันแล้วมีเส้นเชื่อม
+                _buildRoute(b.pickupLocation, b.destination),
+                const SizedBox(height: 14),
+                _buildInfoRow(
+                    Icons.person_outline, 'ลูกค้า', b.partnerName ?? '-'),
+                if (b.plannedStartDate != null)
+                  _buildInfoRow(Icons.schedule_outlined, 'วางแผนออกเดินทาง',
+                      _formatDateTime(b.plannedStartDate!)),
+                if (b.plannedStartDateT != null)
+                  _buildInfoRow(Icons.play_circle_outline, 'ออกเดินทางจริง',
+                      _formatDateTime(b.plannedStartDateT!),
+                      valueColor: const Color(0xFF16A34A)),
+                if (b.estimatedTime != null && b.estimatedTime!.isNotEmpty)
+                  _buildInfoRow(Icons.timelapse_outlined, 'เวลาโดยประมาณ',
+                      b.estimatedTime!, valueColor: const Color(0xFFB45309)),
+              ],
+            ),
+          ),
+          if (hasCost) ...[
+            const Divider(height: 1, indent: 16, endIndent: 16),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('💰 ค่าใช้จ่าย:', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.grey[700])),
-                  const SizedBox(height: 4),
-                  if (widget.booking.shippingCost != null && widget.booking.shippingCost! > 0)
-                    Text('  🚛 ค่าขนส่ง: ${widget.booking.shippingCost!.toStringAsFixed(2)} บาท'),
-                  if (widget.booking.travelExpenses != null && widget.booking.travelExpenses! > 0)
-                    Text('  🚗 ค่าเที่ยว: ${widget.booking.travelExpenses!.toStringAsFixed(2)} บาท'),
-                  if (widget.booking.dailyAllowance != null && widget.booking.dailyAllowance! > 0)
-                    Text('  🍽️ ค่าเบี้ยเลี้ยง: ${widget.booking.dailyAllowance!.toStringAsFixed(2)} บาท'),
+                  Text(
+                    'ค่าใช้จ่าย',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.grey.shade600,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if ((b.shippingCost ?? 0) > 0)
+                    _buildCostRow('ค่าขนส่ง', b.shippingCost!),
+                  if ((b.travelExpenses ?? 0) > 0)
+                    _buildCostRow('ค่าเที่ยว', b.travelExpenses!),
+                  if ((b.dailyAllowance ?? 0) > 0)
+                    _buildCostRow('ค่าเบี้ยเลี้ยง', b.dailyAllowance!),
                 ],
               ),
-            // ✅ เวลาโดยประมาณ
-            if (widget.booking.estimatedTime != null && widget.booking.estimatedTime!.isNotEmpty)
-              Text('⏳ เวลาโดยประมาณ: ${widget.booking.estimatedTime}',
-                style: TextStyle(color: Colors.amber[700], fontWeight: FontWeight.w600)),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRoute(String? from, String? to) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Column(
+          children: [
+            Container(
+              width: 10,
+              height: 10,
+              decoration: const BoxDecoration(
+                  color: Color(0xFF2563EB), shape: BoxShape.circle),
+            ),
+            Container(width: 2, height: 30, color: Colors.grey.shade300),
+            Container(
+              width: 10,
+              height: 10,
+              decoration: const BoxDecoration(
+                  color: Color(0xFF16A34A), shape: BoxShape.circle),
+            ),
           ],
         ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _routeText('รับที่', from),
+              const SizedBox(height: 14),
+              _routeText('ส่งที่', to),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _routeText(String label, String? value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label,
+            style: TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+        const SizedBox(height: 1),
+        Text(
+          value ?? '-',
+          style: const TextStyle(
+              fontSize: 14.5, fontWeight: FontWeight.w600, height: 1.25),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInfoRow(IconData icon, String label, String value,
+      {Color? valueColor}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 17, color: Colors.grey.shade500),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style:
+                        TextStyle(fontSize: 11.5, color: Colors.grey.shade600)),
+                const SizedBox(height: 1),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: valueColor ?? Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCostRow(String label, double amount) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: TextStyle(fontSize: 13.5, color: Colors.grey.shade700)),
+          Text(
+            amount.toStringAsFixed(2) + ' บาท',
+            style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                color: Colors.black87),
+          ),
+        ],
       ),
     );
   }
@@ -334,10 +525,10 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
           children: [
             Row(
               children: [
-                Icon(Icons.info_outline, color: Colors.blue[700]),
+                Icon(Icons.checklist_rounded, color: Colors.blue[700]),
                 const SizedBox(width: 8),
                 Text(
-                  'ℹ️ คำแนะนำ',
+                  'ขั้นตอนก่อนเริ่มงาน',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -346,12 +537,36 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            const Text('• ถ่ายรูปสินค้าก่อนเริ่มงาน'),
-            const SizedBox(height: 4),
-            const Text('• ให้เห็นสภาพสินค้าชัดเจน'),
-            const SizedBox(height: 4),
-            const Text('• บันทึกเวลาเริ่มงาน'),
+            const SizedBox(height: 14),
+            // ไล่เป็นขั้นตอน ไม่ใช่หัวข้อย่อยลอย ๆ เพราะลำดับสำคัญ
+            // ต้องตรวจนับให้ครบก่อนถึงจะถ่ายรูปได้ และไฮไลต์ขั้นที่ทำอยู่
+            // เพื่อไม่ให้คนขับงงว่าทำไมปุ่มกล้องยังกดไม่ได้
+            _buildStep(
+              number: 1,
+              title: _needsProductCheck ? 'ตรวจนับจำนวนสินค้า' : 'ระบุหมายเหตุ',
+              detail: _needsProductCheck
+                  ? 'กดถูกต้อง/ไม่ถูกต้องให้ครบทุกรายการ แล้วกดบันทึก'
+                  : 'เที่ยวนี้ไม่มีสินค้าให้ตรวจ เขียนว่าไปช่วยสาขาไหน ทำอะไรมา',
+              done: _canTakePhoto,
+              active: !_canTakePhoto,
+            ),
+            _buildStep(
+              number: 2,
+              title: 'ถ่าย$_photoSubject',
+              detail: _photoHint,
+              done: _pickedImage != null,
+              active: _canTakePhoto && _pickedImage == null,
+              locked: !_canTakePhoto,
+            ),
+            _buildStep(
+              number: 3,
+              title: 'เริ่มงาน',
+              detail: 'ระบบบันทึกเวลาเริ่มงานให้อัตโนมัติ',
+              done: false,
+              active: _pickedImage != null,
+              locked: _pickedImage == null,
+              isLast: true,
+            ),
           ],
         ),
       ),
@@ -359,35 +574,199 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
   }
 
   Widget _buildImagePreview() {
-    return Card(
-      elevation: 2,
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            children: [
+              const Icon(Icons.photo_library_outlined,
+                  size: 18, color: Color(0xFF16A34A)),
+              const SizedBox(width: 8),
+              Text(
+                '$_photoSubject ${_photos.length}/$_maxPhotos รูป',
+                style: const TextStyle(
+                    fontSize: 14.5, fontWeight: FontWeight.w700),
+              ),
+              const Spacer(),
+              if (_photos.length > 1)
+                TextButton.icon(
+                  onPressed: () => setState(_photos.clear),
+                  icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                  label: const Text('ลบทั้งหมด'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: const Color(0xFFDC2626),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          // รูปแรกใหญ่ที่สุด เพราะเป็นรูปที่ไปโผล่บนหน้าจอ Odoo เป็นหลัก
           ClipRRect(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(12),
             child: Image.file(
-              _pickedImage!,
+              _photos.first,
               width: double.infinity,
-              height: 300,
+              height: 240,
               fit: BoxFit.cover,
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 82,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _photos.length + (_photos.length < _maxPhotos ? 1 : 0),
+              separatorBuilder: (_, __) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                if (index == _photos.length) return _buildAddPhotoTile();
+                return _buildPhotoThumb(index);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPhotoThumb(int index) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.file(_photos[index],
+              width: 82, height: 82, fit: BoxFit.cover),
+        ),
+        Positioned(
+          right: -6,
+          top: -6,
+          child: GestureDetector(
+            onTap: () => setState(() => _photos.removeAt(index)),
+            child: Container(
+              padding: const EdgeInsets.all(3),
+              decoration: const BoxDecoration(
+                color: Color(0xFFDC2626),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.close, size: 14, color: Colors.white),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 4,
+          bottom: 4,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.55),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text('${index + 1}',
+                style: const TextStyle(fontSize: 10, color: Colors.white)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAddPhotoTile() {
+    return GestureDetector(
+      onTap: _isPickingImage ? null : () => _pickImage(ImageSource.camera),
+      child: Container(
+        width: 82,
+        height: 82,
+        decoration: BoxDecoration(
+          color: const Color(0xFFF8FAFC),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.grey.shade300),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.add_a_photo_outlined,
+                size: 22, color: Colors.grey.shade600),
+            const SizedBox(height: 4),
+            Text('เพิ่มรูป',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// หนึ่งขั้นตอนในคำแนะนำ — เสร็จแล้ว / กำลังทำ / ยังล็อกอยู่
+  Widget _buildStep({
+    required int number,
+    required String title,
+    required String detail,
+    required bool done,
+    required bool active,
+    bool locked = false,
+    bool isLast = false,
+  }) {
+    final Color color = done
+        ? const Color(0xFF16A34A)
+        : active
+            ? const Color(0xFF2563EB)
+            : Colors.grey.shade400;
+    return Padding(
+      padding: EdgeInsets.only(bottom: isLast ? 0 : 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 26,
+            height: 26,
+            decoration: BoxDecoration(
+              color: done || active ? color : Colors.transparent,
+              border: Border.all(color: color, width: 1.5),
+              shape: BoxShape.circle,
+            ),
+            child: Center(
+              child: done
+                  ? const Icon(Icons.check, size: 15, color: Colors.white)
+                  : locked
+                      ? Icon(Icons.lock_outline, size: 13, color: color)
+                      : Text(
+                          '$number',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: active ? Colors.white : color,
+                          ),
+                        ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextButton.icon(
-                  onPressed: () {
-                    if (!_isDisposed && mounted) {
-                      setState(() {
-                        _pickedImage = null;
-                      });
-                    }
-                  },
-                  icon: const Icon(Icons.delete, color: Colors.red),
-                  label: const Text('ถ่ายใหม่'),
-                  style: TextButton.styleFrom(foregroundColor: Colors.red),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+                    color: locked ? Colors.grey.shade500 : Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: locked ? Colors.grey.shade400 : Colors.grey.shade700,
+                    height: 1.35,
+                  ),
                 ),
               ],
             ),
@@ -447,6 +826,270 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
     );
   }
 
+  /// ช่องหมายเหตุสำหรับเที่ยวช่วยสาขา — ใช้แทนการตรวจนับสินค้า
+  Widget _buildHelpBranchNoteSection() {
+    final saved = (_checkSummary?.note ?? '').trim().isNotEmpty;
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+            color: saved ? const Color(0xFFBBF7D0) : Colors.grey.shade200),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(saved ? Icons.check_circle : Icons.edit_note_outlined,
+                  size: 20,
+                  color: saved
+                      ? const Color(0xFF16A34A)
+                      : Colors.grey.shade600),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text('หมายเหตุการไปช่วยสาขา',
+                    style: TextStyle(
+                        fontSize: 15.5, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'เที่ยวนี้เป็นการไปช่วยขนส่งให้สาขาอื่น จึงไม่มีรายการสินค้าให้ตรวจนับ\n'
+            'เขียนให้ครบ 3 อย่าง: ไปช่วยสาขาไหน / ขนอะไร / กี่เที่ยว หรือช่วงเวลาไหน\n'
+            'ระบบจะตรวจข้อความให้อัตโนมัติหลังกดบันทึก',
+            style: TextStyle(fontSize: 12.5, color: Colors.grey.shade600),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _noteController,
+            maxLines: 4,
+            // ใช้ done ไม่ใช่ newline เพราะแป้นพิมพ์จะได้มีปุ่ม "เสร็จสิ้น"
+            // ให้ปิดแป้นได้ ของเดิมเป็นปุ่มขึ้นบรรทัดใหม่ คนขับจึงปิดแป้นไม่ได้
+            // แล้วมองไม่เห็นปุ่มบันทึกที่อยู่ใต้แป้นพอดี
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => FocusScope.of(context).unfocus(),
+            decoration: InputDecoration(
+              hintText: 'เช่น ไปช่วยสาขาราชบุรีขนนั่งร้านให้หน้างานของสาขาเขา '
+                  '2 เที่ยว ตั้งแต่ 9 โมงถึงบ่าย 2',
+              hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+              contentPadding: const EdgeInsets.all(12),
+              filled: true,
+              fillColor: const Color(0xFFF8FAFC),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(color: Colors.grey.shade300),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide:
+                    const BorderSide(color: Color(0xFF2563EB), width: 1.6),
+              ),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+          if ((_checkSummary?.noteAiMessage ?? '').isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _buildNoteAiResult(),
+          ],
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 46,
+            child: ElevatedButton.icon(
+              onPressed: _savingNote ? null : _saveHelpBranchNote,
+              icon: _savingNote
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.save_outlined, size: 19),
+              label: Text(_savingNote ? 'กำลังบันทึก...' : 'บันทึกหมายเหตุ',
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w600)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF2563EB),
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: Colors.grey.shade300,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// การ์ดแสดงผล AI ตรวจหมายเหตุ
+  Widget _buildNoteAiResult() {
+    final s = _checkSummary!;
+    final needsRewrite = s.noteNeedsRewrite;
+    final accepted = s.noteAccepted;
+    final Color bg = needsRewrite
+        ? const Color(0xFFFFFBEB)
+        : accepted
+            ? const Color(0xFFF0FDF4)
+            : const Color(0xFFF8FAFC);
+    final Color line = needsRewrite
+        ? const Color(0xFFFDE68A)
+        : accepted
+            ? const Color(0xFFBBF7D0)
+            : Colors.grey.shade300;
+    final IconData icon = needsRewrite
+        ? Icons.warning_amber_rounded
+        : accepted
+            ? Icons.verified_rounded
+            : Icons.info_outline;
+    final Color iconColor = needsRewrite
+        ? const Color(0xFFB45309)
+        : accepted
+            ? const Color(0xFF16A34A)
+            : Colors.grey.shade600;
+    final String title = needsRewrite
+        ? 'ระบบตรวจแล้ว — ควรเขียนให้ชัดกว่านี้'
+        : accepted
+            ? 'ระบบตรวจแล้ว — หมายเหตุใช้ได้'
+            : 'ผลการตรวจหมายเหตุ';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: line),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 18, color: iconColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(title,
+                    style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                        color: iconColor)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(s.noteAiMessage,
+              style: TextStyle(
+                  fontSize: 12.5, height: 1.35, color: Colors.grey.shade800)),
+          if (needsRewrite && s.noteAiExample.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade300),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('ตัวอย่างที่ควรเขียน',
+                      style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.grey.shade600)),
+                  const SizedBox(height: 4),
+                  Text(s.noteAiExample,
+                      style: const TextStyle(fontSize: 13, height: 1.35)),
+                  const SizedBox(height: 6),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: () {
+                        // เติมให้แล้วให้คนขับแก้รายละเอียดเอง เร็วกว่าพิมพ์ใหม่
+                        setState(() {
+                          _noteController.text = s.noteAiExample;
+                          _noteController.selection =
+                              TextSelection.collapsed(
+                                  offset: s.noteAiExample.length);
+                        });
+                      },
+                      icon: const Icon(Icons.edit_note, size: 18),
+                      label: const Text('ใช้ข้อความนี้แล้วแก้ต่อ'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: const Color(0xFF2563EB),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+          if (needsRewrite) ...[
+            const SizedBox(height: 8),
+            Text(
+              'แก้ข้อความด้านบนแล้วกดบันทึกอีกครั้งได้ '
+              'ถ้ายืนยันว่าเขียนถูกแล้วก็ถ่ายรูปต่อได้เลย',
+              style: TextStyle(
+                  fontSize: 12, color: Colors.grey.shade600, height: 1.3),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Future<void> _saveHelpBranchNote() async {
+    final note = _noteController.text.trim();
+    if (note.isEmpty) {
+      _showError('กรุณาระบุหมายเหตุว่าไปช่วยสาขาทำอะไรมา');
+      return;
+    }
+    setState(() => _savingNote = true);
+    try {
+      final result = await _odooService.saveHelpBranchNote(
+        bookingId: widget.booking.id,
+        note: note,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (result?['summary'] != null) {
+          _checkSummary = ProductCheckSummary.fromJson(
+              Map<String, dynamic>.from(result!['summary'] as Map));
+        }
+        _savingNote = false;
+      });
+      // ข้อความเต็มของ AI อยู่ในการ์ดใต้ช่องกรอกแล้ว แจ้งซ้ำใน SnackBar
+      // จะบังจอและอ่านสองที่เหมือนกัน เหลือแค่บอกสั้น ๆ ว่าบันทึกสำเร็จ
+      // แล้วชี้ให้ไปดูการ์ดแทน
+      final s = _checkSummary;
+      final needsRewrite = s != null && s.noteNeedsRewrite;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(needsRewrite
+              ? 'บันทึกแล้ว — ดูคำแนะนำด้านล่าง'
+              : 'บันทึกหมายเหตุแล้ว ถ่ายรูปได้เลย'),
+          backgroundColor: needsRewrite
+              ? const Color(0xFFB45309)
+              : const Color(0xFF16A34A),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _savingNote = false);
+      _showError(e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
   Widget _buildCameraButtons() {
     return SizedBox(
       width: double.infinity,
@@ -457,7 +1100,11 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
         icon: Icon(_canTakePhoto ? Icons.camera_alt : Icons.lock_outline,
             size: 28),
         label: Text(
-          _canTakePhoto ? 'เปิดกล้องถ่ายรูป' : 'ตรวจนับสินค้าให้ครบก่อน',
+          _canTakePhoto
+              ? 'เปิดกล้องถ่าย$_photoSubject'
+              : (_needsProductCheck
+                  ? 'ตรวจนับสินค้าให้ครบก่อน'
+                  : 'บันทึกหมายเหตุก่อน'),
           style: const TextStyle(fontSize: 18),
         ),
         style: ElevatedButton.styleFrom(
@@ -516,7 +1163,7 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
                   )
                 : const Icon(Icons.play_arrow, size: 28),
             label: Text(
-              _isUploading ? 'กำลังเริ่มงาน...' : '🚚 เริ่มงานขนส่ง',
+              _isUploading ? 'กำลังเริ่มงาน...' : 'เริ่มงานขนส่ง',
               style: const TextStyle(fontSize: 18),
             ),
             style: ElevatedButton.styleFrom(
@@ -553,20 +1200,13 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
     try {
       print('📷 [StartJob] Starting photo pick...');
       
-      // ✅ FIX CRITICAL: ลบรูปเก่าก่อนถ่ายใหม่ (ป้องกัน memory leak)
-      if (_pickedImage != null) {
-        try {
-          print('🗑️ [StartJob] Deleting old photo to free memory...');
-          final oldFile = _pickedImage!;
-          _pickedImage = null; // Clear reference first
-          
-          if (await oldFile.exists()) {
-            await oldFile.delete();
-            print('✅ [StartJob] Old photo deleted successfully');
-          }
-        } catch (e) {
-          print('⚠️ [StartJob] Could not delete old photo: $e');
+      // เดิมลบรูปเก่าทิ้งก่อนถ่ายใหม่เพื่อกัน memory leak ตอนนี้เก็บหลายรูป
+      // จึงลบไม่ได้ กันหน่วยความจำด้วยการจำกัดจำนวนรูปแทน
+      if (_photos.length >= _maxPhotos) {
+        if (mounted) {
+          _showError('ถ่ายได้สูงสุด $_maxPhotos รูป ลบรูปเก่าออกก่อน');
         }
+        return;
       }
       
       // ✅ Clear cache before opening camera
@@ -678,8 +1318,9 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
         
         if (mounted && !_isDisposed) {
           setState(() {
-            _pickedImage = imageFile;
-            print('✅ [StartJob] Photo set - Size: ${(fileSize / 1024).toStringAsFixed(1)} KB');
+            _photos.add(imageFile);
+            print('OK [StartJob] Photo ${_photos.length}/$_maxPhotos - '
+                '${(fileSize / 1024).toStringAsFixed(1)} KB');
           });
         }
       } else if (!_isDisposed) {
@@ -705,7 +1346,7 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
     try {
       await Share.shareXFiles(
         [XFile(_pickedImage!.path)],
-        text: 'รูปสินค้า - ${widget.booking.name}',
+        text: '$_photoSubject - ${widget.booking.name}',
       );
     } catch (e) {
       if (!_isDisposed && mounted) {
@@ -721,7 +1362,7 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
     }
 
     if (_pickedImage == null) {
-      _showError('กรุณาถ่ายรูปสินค้าก่อน');
+      _showError('กรุณาถ่าย$_photoSubjectก่อน');
       return;
     }
 
@@ -756,9 +1397,29 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
       // }
       
       // อัพโหลดรูปและเริ่มงาน
+      // อ่านตำแหน่งจริงก่อนส่ง เพื่อให้จุด GPS แรกของเที่ยวเป็นที่ที่คนขับ
+      // ยืนอยู่จริง ไม่ใช่พิกัดคลังที่วางแผนไว้
+      // จับไม่ติดก็ไม่เป็นไร ฝั่ง Odoo ถอยไปใช้พิกัดคลังเอง ไม่ควรขวางการเริ่มงาน
+      Position? startPosition;
+      try {
+        startPosition = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 12),
+          ),
+        );
+        print('OK [StartJob] ตำแหน่งตอนเริ่มงาน '
+            '${startPosition.latitude}, ${startPosition.longitude}');
+      } catch (e) {
+        print('[StartJob] อ่านตำแหน่งไม่ได้ จะให้ Odoo ใช้พิกัดคลังแทน: $e');
+      }
+
       final success = await _odooService.startJobWithPhoto(
         bookingId: widget.booking.id,
-        photoPath: _pickedImage!.path,
+        photoPath: _photos.first.path,
+        extraPhotoPaths: _photos.skip(1).map((f) => f.path).toList(),
+        driverLatitude: startPosition?.latitude,
+        driverLongitude: startPosition?.longitude,
       );
 
       if (_isDisposed) return;
@@ -785,7 +1446,7 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('✅ เริ่มงานและติดตามตำแหน่งสำเร็จ!'),
+                content: Text('เริ่มงานและติดตามตำแหน่งแล้ว'),
                 backgroundColor: Colors.green,
                 duration: Duration(seconds: 2),
               ),
@@ -802,7 +1463,7 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
                   children: [
                     Icon(Icons.warning_amber, color: Colors.orange[700]),
                     const SizedBox(width: 8),
-                    const Text('⚠️ แจ้งเตือน'),
+                    const Text('แจ้งเตือน'),
                   ],
                 ),
                 content: const Text(
@@ -966,7 +1627,7 @@ class _StartJobScreenState extends State<StartJobScreen> with WidgetsBindingObse
           children: [
             Icon(Icons.error, color: Colors.red),
             SizedBox(width: 12),
-            Text('❌ ข้อผิดพลาด'),
+            Text('ข้อผิดพลาด'),
           ],
         ),
         content: Text(message),

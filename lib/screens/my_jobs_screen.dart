@@ -140,7 +140,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('❌ ไม่พบข้อมูลตำแหน่งปลายทาง'),
+              content: Text('ไม่พบข้อมูลตำแหน่งปลายทาง'),
               backgroundColor: Colors.red,
             ),
           );
@@ -169,7 +169,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('🗺️ เปิด Google Maps\n📍 นำทางไปปลายทาง'),
+            content: Text('เปิด Google Maps นำทางไปปลายทาง'),
             backgroundColor: Colors.blue,
             duration: Duration(seconds: 2),
           ),
@@ -192,7 +192,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('🗺️ เปิด Google Maps นำทางไปปลายทาง'),
+            content: Text('เปิด Google Maps นำทางไปปลายทาง'),
             backgroundColor: Colors.blue,
             duration: Duration(seconds: 2),
           ),
@@ -215,7 +215,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('🌐 เปิด Google Maps ผ่าน Browser\nกดปุ่ม "Start" เพื่อเริ่มนำทาง'),
+            content: Text('เปิด Google Maps ผ่านเบราว์เซอร์ — กดปุ่ม "Start" เพื่อเริ่มนำทาง'),
             backgroundColor: Colors.orange,
             duration: Duration(seconds: 3),
           ),
@@ -231,7 +231,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('❌ ไม่สามารถเปิด Google Maps ได้\n'
+          content: Text('ไม่สามารถเปิด Google Maps ได้\n'
               'กรุณาติดตั้ง Google Maps\n'
               'หรือนำทางเอง:\n'
               '• ปลายทาง: ${lat != null && lng != null ? "$lat, $lng" : address}'),
@@ -486,143 +486,157 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
       actualStartTime = _getStoredStartTime(booking.id);
     }
 
+    final bool hasCost = (booking.shippingCost ?? 0) > 0 ||
+        (booking.travelExpenses ?? 0) > 0 ||
+        (booking.dailyAllowance ?? 0) > 0;
+
     return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      elevation: 2,
+      margin: const EdgeInsets.only(bottom: 14),
+      elevation: 0,
+      color: Colors.white,
+      clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: Colors.grey.shade200),
       ),
       child: InkWell(
         onTap: () => _showBookingDetail(booking),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Text(
-                      booking.name,
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'เลขที่จอง',
+                          style: TextStyle(
+                            fontFamily: 'Kanit',
+                            fontSize: 11,
+                            height: 1.1,
+                            color: Colors.grey.shade500,
+                          ),
+                        ),
+                        const SizedBox(height: 1),
+                        Text(
+                          booking.name,
+                          style: const TextStyle(
+                            fontFamily: 'Kanit',
+                            fontSize: 17,
+                            fontWeight: FontWeight.w700,
+                            height: 1.2,
+                            color: Color(0xFF111827),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
+                  const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
+                      horizontal: 10,
+                      vertical: 5,
                     ),
                     decoration: BoxDecoration(
                       color: booking.state == 'in_progress'
-                          ? Colors.blue.shade50
-                          : Colors.green.shade50,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: booking.state == 'in_progress'
-                            ? Colors.blue.shade200
-                            : Colors.green.shade200,
-                      ),
+                          ? const Color(0xFFEFF6FF)
+                          : const Color(0xFFF0FDF4),
+                      borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       booking.getStateText(),
                       style: TextStyle(
+                        fontFamily: 'Kanit',
                         color: booking.state == 'in_progress'
-                            ? Colors.blue.shade700
-                            : Colors.green.shade700,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
+                            ? const Color(0xFF1D4ED8)
+                            : const Color(0xFF15803D),
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
+              // เส้นทางมาก่อนเสมอ คนขับเปิดการ์ดมาก็อยากรู้ว่าไปไหน
+              _buildRouteBlock(booking.pickupLocation, booking.destination),
               if (booking.partnerName != null)
                 _buildInfoRow(
-                  Icons.business,
+                  Icons.business_outlined,
                   'ลูกค้า',
                   booking.partnerName!,
                 ),
-              if (booking.pickupLocation != null)
+              if (booking.plannedStartDate != null)
                 _buildInfoRow(
-                  Icons.location_on,
-                  'ต้นทาง',
-                  booking.pickupLocation!,
+                  Icons.schedule_outlined,
+                  'วางแผนออกเดินทาง',
+                  dateFormat.format(booking.plannedStartDate!),
+                  // เลยเวลาออกรถแล้วต้องสะดุดตา จึงเหลือสีไว้เฉพาะจุดนี้
+                  color: canStartNow ? null : const Color(0xFFD97706),
                 ),
-              if (booking.destination != null)
+              if (booking.plannedStartDateT != null)
                 _buildInfoRow(
-                  Icons.flag,
-                  'ปลายทาง',
-                  booking.destination!,
+                  Icons.flight_takeoff_outlined,
+                  'ออกเดินทางจากคลังจริง',
+                  dateFormat.format(booking.plannedStartDateT!),
+                ),
+              if (booking.plannedEndDateT != null)
+                _buildInfoRow(
+                  Icons.flag_outlined,
+                  'ถึงหน้าไซต์งานจริง',
+                  dateFormat.format(booking.plannedEndDateT!),
+                ),
+              if (booking.estimatedTime != null && booking.estimatedTime!.isNotEmpty)
+                _buildInfoRow(
+                  Icons.timelapse_outlined,
+                  'เวลาโดยประมาณ',
+                  booking.estimatedTime!,
                 ),
               if (booking.totalWeightOrder != null && booking.totalWeightOrder! > 0)
                 _buildInfoRow(
-                  Icons.scale,
+                  Icons.scale_outlined,
                   'น้ำหนักรวม',
                   '${booking.totalWeightOrder!.toStringAsFixed(2)} กก.',
-                  color: Colors.blue.shade700,
                 ),
-              if (booking.plannedStartDate != null)
-                _buildInfoRow(
-                  Icons.schedule,
-                  'วางแผนออกเดินทาง',
-                  dateFormat.format(booking.plannedStartDate!),
-                  color: canStartNow ? Colors.green : Colors.orange,
+              // ค่าใช้จ่ายแยกเป็นกลุ่มท้ายการ์ด ไม่ปนกับข้อมูลเดินทาง
+              if (hasCost) ...[
+                Container(
+                  margin: const EdgeInsets.only(top: 2, bottom: 12),
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.grey.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'ค่าใช้จ่าย',
+                        style: TextStyle(
+                          fontFamily: 'Kanit',
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.grey.shade600,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      if (booking.shippingCost != null && booking.shippingCost! > 0)
+                        _buildMoneyRow('ค่าขนส่ง', booking.shippingCost!),
+                      if (booking.travelExpenses != null && booking.travelExpenses! > 0)
+                        _buildMoneyRow('ค่าเที่ยว', booking.travelExpenses!),
+                      if (booking.dailyAllowance != null && booking.dailyAllowance! > 0)
+                        _buildMoneyRow('ค่าเบี้ยเลี้ยง', booking.dailyAllowance!),
+                    ],
+                  ),
                 ),
-              // ✅ แสดง เวลาออกเดินทางจริง (ดึงจาก plannedStartDateT)
-              if (booking.plannedStartDateT != null)
-                _buildInfoRow(
-                  Icons.flight_takeoff,
-                  'เวลาออกจริง',
-                  dateFormat.format(booking.plannedStartDateT!),
-                  color: Colors.green.shade700,
-                ),
-              // ✅ แสดง เวลาส่งถึงจริง (ดึงจาก plannedEndDateT)
-              if (booking.plannedEndDateT != null)
-                _buildInfoRow(
-                  Icons.check_circle,
-                  'เวลาส่งถึงจริง',
-                  dateFormat.format(booking.plannedEndDateT!),
-                  color: Colors.blue.shade700,
-                ),
-              // ส่วนที่ 3: แสดงค่าขนส่ง
-              if (booking.shippingCost != null && booking.shippingCost! > 0)
-                _buildInfoRow(
-                  Icons.local_shipping,
-                  'ค่าขนส่ง',
-                  '${booking.shippingCost!.toStringAsFixed(2)} บาท',
-                  color: Colors.purple.shade700,
-                ),
-              // ส่วนที่ 4: แสดงค่าเที่ยว
-              if (booking.travelExpenses != null && booking.travelExpenses! > 0)
-                _buildInfoRow(
-                  Icons.local_atm,
-                  'ค่าเที่ยว',
-                  '${booking.travelExpenses!.toStringAsFixed(2)} บาท',
-                  color: Colors.green.shade700,
-                ),
-              // ✅ เพิ่มค่าเบี้ยเลี้ยง
-              if (booking.dailyAllowance != null && booking.dailyAllowance! > 0)
-                _buildInfoRow(
-                  Icons.restaurant,
-                  'ค่าเบี้ยเลี้ยง',
-                  '${booking.dailyAllowance!.toStringAsFixed(2)} บาท',
-                  color: Colors.orange.shade700,
-                ),
-              // ✅ เพิ่ม: เวลาโดยประมาณ
-              if (booking.estimatedTime != null && booking.estimatedTime!.isNotEmpty)
-                _buildInfoRow(
-                  Icons.hourglass_bottom,
-                  'เวลาโดยประมาณ',
-                  booking.estimatedTime!,
-                  color: Colors.amber.shade700,
-                ),
-              const SizedBox(height: 12),
+              ],
               
               // แสดงสถานะการติดตามตำแหน่ง (เฉพาะงานที่กำลังทำ)
               _buildTrackingStatus(booking),
@@ -639,12 +653,9 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
                         padding: const EdgeInsets.all(12),
                         margin: const EdgeInsets.only(bottom: 12),
                         decoration: BoxDecoration(
-                          color: Colors.orange.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: Colors.orange.shade300,
-                            width: 2,
-                          ),
+                          color: const Color(0xFFFFFBEB),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFFFDE68A)),
                         ),
                         child: Row(
                           children: [
@@ -659,9 +670,10 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    '⚠️ มีงานกำลังทำอยู่',
+                                    'มีงานกำลังทำอยู่',
                                     style: TextStyle(
-                                      fontWeight: FontWeight.bold,
+                                      fontFamily: 'Kanit',
+                                      fontWeight: FontWeight.w700,
                                       fontSize: 14,
                                       color: Colors.orange.shade900,
                                     ),
@@ -767,40 +779,147 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
     );
   }
 
+  /// แถวข้อมูลหนึ่งรายการ — ป้ายกำกับตัวเล็กอยู่บน ค่าตัวหนาอยู่ล่าง
+  ///
+  /// ของเดิมเป็น "ป้าย: ค่า" ต่อกันบรรทัดเดียว พออยู่บนมือถือค่าที่ยาว
+  /// เช่นที่อยู่จะตัดคำไปพันกับป้าย แยกสองชั้นแล้วคนขับกวาดตาหาค่าได้เลย
+  /// สีสงวนไว้ให้ค่าที่ต้องเตือน (เช่นเลยกำหนดออกรถ) ไม่ใช่ระบายทุกบรรทัด
   Widget _buildInfoRow(IconData icon, String label, String value,
       {Color? color}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.only(bottom: 11),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: color ?? Colors.grey.shade600),
-          const SizedBox(width: 8),
+          Icon(icon, size: 17, color: Colors.grey.shade400),
+          const SizedBox(width: 10),
           Expanded(
-            child: RichText(
-              text: TextSpan(
-                style: TextStyle(
-                  fontFamily: 'Kanit',  // ✅ เพิ่ม Kanit font
-                  color: Colors.grey.shade800,
-                  fontSize: 14,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontFamily: 'Kanit',
+                    fontSize: 11.5,
+                    height: 1.1,
+                    color: Colors.grey.shade600,
+                  ),
                 ),
-                children: [
-                  TextSpan(
-                    text: '$label: ',
-                    style: const TextStyle(
-                      fontFamily: 'Kanit',  // ✅ เพิ่ม Kanit font
-                      fontWeight: FontWeight.bold,
-                    ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontFamily: 'Kanit',
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    height: 1.25,
+                    color: color ?? const Color(0xFF1F2937),
                   ),
-                  TextSpan(
-                    text: value,
-                    style: TextStyle(
-                      fontFamily: 'Kanit',  // ✅ เพิ่ม Kanit font
-                      color: color ?? Colors.grey.shade800,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ต้นทางกับปลายทางอ่านเป็นคู่ วาดเป็นเส้นทางให้เห็นทิศทางในแวบเดียว
+  Widget _buildRouteBlock(String? from, String? to) {
+    if (from == null && to == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Column(
+              children: [
+                Container(
+                  width: 9,
+                  height: 9,
+                  decoration: const BoxDecoration(
+                      color: Color(0xFF2563EB), shape: BoxShape.circle),
+                ),
+                Container(width: 2, height: 30, color: Colors.grey.shade300),
+                Container(
+                  width: 9,
+                  height: 9,
+                  decoration: const BoxDecoration(
+                      color: Color(0xFF16A34A), shape: BoxShape.circle),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _routeLine('ต้นทาง', from),
+                const SizedBox(height: 12),
+                _routeLine('ปลายทาง', to),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _routeLine(String label, String? value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontFamily: 'Kanit',
+            fontSize: 11.5,
+            height: 1.1,
+            color: Colors.grey.shade600,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value ?? '-',
+          style: const TextStyle(
+            fontFamily: 'Kanit',
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            height: 1.25,
+            color: Color(0xFF1F2937),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// ค่าใช้จ่ายเป็นตัวเลขที่คนขับต้องเทียบกับที่ได้รับจริง
+  /// วางเป็นตารางป้าย-จำนวนชิดขวา อ่านง่ายกว่าแถวข้อมูลทั่วไป
+  Widget _buildMoneyRow(String label, double amount) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontFamily: 'Kanit',
+              fontSize: 13.5,
+              color: Colors.grey.shade700,
+            ),
+          ),
+          Text(
+            '${amount.toStringAsFixed(2)} บาท',
+            style: const TextStyle(
+              fontFamily: 'Kanit',
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF1F2937),
             ),
           ),
         ],
@@ -1046,7 +1165,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
           
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('✅ เริ่มงานสำเร็จ'),
+              content: Text('เริ่มงานสำเร็จ'),
               backgroundColor: Colors.green,
             ),
           );
@@ -1062,7 +1181,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('❌ เริ่มงานไม่สำเร็จ'),
+              content: Text('เริ่มงานไม่สำเร็จ'),
               backgroundColor: Colors.red,
             ),
           );
@@ -1121,7 +1240,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
         if (success) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('✅ เสร็จสิ้นงานสำเร็จ'),
+              content: Text('เสร็จสิ้นงานสำเร็จ'),
               backgroundColor: Colors.green,
             ),
           );
@@ -1129,7 +1248,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('❌ เสร็จสิ้นงานไม่สำเร็จ'),
+              content: Text('เสร็จสิ้นงานไม่สำเร็จ'),
               backgroundColor: Colors.red,
             ),
           );
@@ -1178,7 +1297,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('✅ เริ่มติดตามตำแหน่งอัตโนมัติสำเร็จ'),
+                    content: Text('เริ่มติดตามตำแหน่งอัตโนมัติแล้ว'),
                     backgroundColor: Colors.green,
                     duration: Duration(seconds: 2),
                   ),
@@ -1189,7 +1308,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('⚠️ ไม่สามารถเริ่มติดตามตำแหน่งได้'),
+                    content: Text('ไม่สามารถเริ่มติดตามตำแหน่งได้'),
                     backgroundColor: Colors.orange,
                     duration: Duration(seconds: 3),
                   ),
@@ -1201,7 +1320,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: const Text('⚠️ ต้องการสิทธิ์ GPS เพื่อติดตามตำแหน่ง'),
+                  content: const Text('ต้องการสิทธิ์ GPS เพื่อติดตามตำแหน่ง'),
                   backgroundColor: Colors.orange,
                   duration: const Duration(seconds: 3),
                   action: SnackBarAction(
@@ -1383,7 +1502,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  isTracking ? '📍 กำลังติดตามตำแหน่ง' : '⚠️ ไม่ได้ติดตามตำแหน่ง',
+                  isTracking ? 'กำลังติดตามตำแหน่ง' : 'ไม่ได้ติดตามตำแหน่ง',
                   style: TextStyle(
                     fontFamily: 'Kanit',  // ✅ เพิ่ม Kanit font
                     fontWeight: FontWeight.bold,
@@ -1411,7 +1530,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
                 // แสดง loading
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('🔄 กำลังเริ่มติดตามตำแหน่ง...'),
+                    content: Text('กำลังเริ่มติดตามตำแหน่ง...'),
                     duration: Duration(seconds: 1),
                   ),
                 );
@@ -1425,7 +1544,7 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
                 if (started && mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
-                      content: Text('✅ เริ่มติดตามตำแหน่งแล้ว'),
+                      content: Text('เริ่มติดตามตำแหน่งแล้ว'),
                       backgroundColor: Colors.green,
                     ),
                   );
@@ -1444,10 +1563,10 @@ class _MyJobsScreenState extends State<MyJobsScreen> {
                       ),
                       content: const Text(
                         'กรุณาตรวจสอบ:\n\n'
-                        '✓ เปิด GPS/Location Service\n'
-                        '✓ อนุญาตสิทธิ์ Location ให้แอป\n'
-                        '✓ ตรวจสอบสัญญาณ GPS\n'
-                        '✓ ลองรีสตาร์ทแอป',
+                        '\u2022 เปิด GPS/Location Service\n'
+                        '\u2022 อนุญาตสิทธิ์ Location ให้แอป\n'
+                        '\u2022 ตรวจสอบสัญญาณ GPS\n'
+                        '\u2022 ลองรีสตาร์ทแอป',
                       ),
                       actions: [
                         TextButton(

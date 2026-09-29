@@ -30,6 +30,14 @@ class Booking {
   final double? destinationLatitude;
   final double? destinationLongitude;
 
+  /// ประเภทการจัดส่ง: to_customer / from_customer / branch_transfer / help_branch
+  /// หน้าจบงานใช้ค่านี้สลับคำเรียก เพราะเที่ยว "ส่งรถไปช่วยขนส่งอีกสาขา"
+  /// ไม่มี "ผู้รับสินค้า" แต่มี "ผู้รับรองจากสาขาที่ไปช่วย" แทน
+  final String shipmentPurpose;
+
+  /// เที่ยวนี้เป็นการเอารถไปช่วยสาขาอื่น ไม่ใช่การส่งของให้ลูกค้า
+  bool get isHelpBranch => shipmentPurpose == 'help_branch';
+
   Booking({
     required this.id,
     required this.name,
@@ -59,6 +67,7 @@ class Booking {
     this.pickupLongitude,
     this.destinationLatitude,
     this.destinationLongitude,
+    this.shipmentPurpose = '',
   });
 
   factory Booking.fromJson(Map<String, dynamic> json) {
@@ -130,6 +139,7 @@ class Booking {
       plannedEndDateT: json['planned_end_date_t'] != null && json['planned_end_date_t'] != false && json['planned_end_date_t'] is String
           ? _convertToThailandTime(json['planned_end_date_t'])
           : null,
+      shipmentPurpose: _safeString(json['shipment_purpose']) ?? '',
       actualStartDateTime: null, // ✅ ตั้งเป็น null - จะเซตเวลาปัจจุบันเมื่อเริ่มงานที่แอป
       travelExpenses: json['travel_expenses'] != null && json['travel_expenses'] != false
           ? (json['travel_expenses'] as num).toDouble()
@@ -166,15 +176,15 @@ class Booking {
   String getStateText() {
     switch (state) {
       case 'draft':
-        return '📝 ร่าง';
+        return 'ร่าง';
       case 'confirmed':
-        return '✅ ยืนยันการจอง';
+        return 'ยืนยันการจอง';
       case 'in_progress':
-        return '🚚 กำลังขนส่ง';
+        return 'กำลังขนส่ง';
       case 'done':
-        return '✔️ เสร็จสิ้น';
+        return 'เสร็จสิ้น';
       case 'cancelled':
-        return '❌ ยกเลิก';
+        return 'ยกเลิก';
       default:
         return state;
     }

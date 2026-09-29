@@ -63,6 +63,20 @@ class ProductCheckSummary {
   final int mismatch;
   final bool canTakePhoto;
 
+  /// เที่ยว "ส่งรถไปช่วยขนส่งอีกสาขา" ไม่มีสินค้าให้ตรวจนับ ใช้หมายเหตุแทน
+  /// ฝั่ง Odoo เป็นคนบอกว่าเที่ยวไหนต้องตรวจ แอปไม่ตัดสินเองจากชื่อประเภท
+  /// เพราะถ้าเพิ่มประเภทใหม่ทีหลังแล้วลืมแก้แอป จะเงียบหายไปเลย
+  final bool needsProductCheck;
+  final String shipmentPurpose;
+  final String note;
+
+  /// ผล AI ตรวจหมายเหตุ: match / mismatch / unclear / pending / error
+  final String noteAiState;
+  final String noteAiMessage;
+
+  /// ตัวอย่างข้อความที่ AI ร่างให้ คนขับกดใช้แล้วแก้รายละเอียดเองได้
+  final String noteAiExample;
+
   ProductCheckSummary({
     required this.bookingId,
     required this.bookingName,
@@ -71,6 +85,12 @@ class ProductCheckSummary {
     required this.total,
     required this.mismatch,
     required this.canTakePhoto,
+    this.needsProductCheck = true,
+    this.shipmentPurpose = '',
+    this.note = '',
+    this.noteAiState = '',
+    this.noteAiMessage = '',
+    this.noteAiExample = '',
   });
 
   factory ProductCheckSummary.fromJson(Map<String, dynamic> json) {
@@ -82,6 +102,12 @@ class ProductCheckSummary {
       total: json['total'] ?? 0,
       mismatch: json['mismatch'] ?? 0,
       canTakePhoto: json['can_take_photo'] ?? false,
+      needsProductCheck: json['needs_product_check'] ?? true,
+      shipmentPurpose: (json['shipment_purpose'] ?? '').toString(),
+      note: (json['note'] ?? '').toString(),
+      noteAiState: (json['note_ai_state'] ?? '').toString(),
+      noteAiMessage: (json['note_ai_message'] ?? '').toString(),
+      noteAiExample: (json['note_ai_example'] ?? '').toString(),
     );
   }
 
@@ -89,4 +115,10 @@ class ProductCheckSummary {
   bool get hasLines => total > 0;
 
   String get progressText => '$checked จาก $total รายการ';
+
+  /// AI มองว่าหมายเหตุยังใช้ไม่ได้ — ควรเตือนให้คนขับเขียนใหม่
+  bool get noteNeedsRewrite =>
+      noteAiState == 'mismatch' || noteAiState == 'unclear';
+
+  bool get noteAccepted => noteAiState == 'match';
 }

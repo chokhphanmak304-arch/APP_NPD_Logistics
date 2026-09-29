@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -21,6 +22,17 @@ class OdooService {
   String? _sessionId;
   DateTime? _sessionExpiryTime;  // 🔐 เก็บเวลาหมดอายุ session
 
+  /// ให้ isolate เบื้องหลังเรียกก่อนสร้าง OdooService
+  ///
+  /// singleton ไม่ข้าม isolate มาให้ ต้องอ่านค่าที่จำไว้จาก SharedPreferences
+  /// เข้ามาใหม่ ไม่งั้นงานเบื้องหลังจะยิงไปผิดเซิร์ฟเวอร์
+  static Future<void> ensureConfigLoaded() async {
+    final holder = OdooConfigHolder.getInstance();
+    if (holder.getConfig() != null) return;
+    final config = await ConnectionService.fetchConnectionConfig();
+    if (config != null) holder.setConfig(config);
+  }
+
   // ✅ Constructor ที่ดึง config จาก singleton
   OdooService() {
     final holder = OdooConfigHolder.getInstance();
@@ -35,12 +47,16 @@ class OdooService {
       print('   Base URL: $_baseUrl');
       print('   Database: $_db');
     } else {
-      // ⚠️ Fallback (should not happen if flow is correct)
-      print('⚠️ [OdooService] Constructor: No config in singleton, using defaults');
-      _baseUrl = 'http://localhost:8078';
-      _db = 'Npd_Transport';
-      _username = 'Npd_admin';
-      _password = '1234';
+      // เกิดจริงใน isolate เบื้องหลัง (งานส่งพิกัด) เพราะ singleton ไม่ข้าม
+      // isolate มาให้ ค่าเดิมชี้ไป localhost ซึ่งไม่มีอะไรรออยู่บนมือถือ
+      // พิกัดจึงส่งไม่ขึ้นทุกครั้งพร้อม "Connection refused"
+      // ใช้ค่าที่ฝังมากับแอปแทน อย่างน้อยก็ชี้ไปเซิร์ฟเวอร์จริง
+      final fallback = ConnectionService.builtInConfig;
+      print('[OdooService] ไม่มี config ใน singleton ใช้ค่าที่ฝังมากับแอป');
+      _baseUrl = fallback.baseUrl;
+      _db = fallback.database;
+      _username = fallback.username;
+      _password = fallback.password;
     }
     
     // ✅ Do NOT initialize authentication here
@@ -346,7 +362,8 @@ class OdooService {
                 'employment_status',
                 'license_number',
                 'license_type',
-                'branch_id'
+                'branch_id',
+                'image_256'
               ],
             },
           },
@@ -375,6 +392,9 @@ class OdooService {
         if (data['result'] != null && data['result'].isNotEmpty) {
           final driverData = data['result'][0];
           print('✅ [OdooService.loginWithPin] Driver found: ${driverData['name']}');
+          // ล็อกอินผ่านแล้ว ถือโอกาสเก็บค่าเชื่อมต่อล่าสุดไว้ใช้รอบหน้า
+          // ไม่ await เพราะไม่ควรหน่วงการเข้าใช้งานของคนขับ
+          unawaited(refreshConnectionConfig());
           return Driver.fromJson(driverData);
         } else {
           print('⚠️  [OdooService.loginWithPin] No driver found with PIN: $pin');
@@ -388,6 +408,172 @@ class OdooService {
       print('❌ [OdooService.loginWithPin] Error: $e');
       print('   Stack trace: ${e.toString()}');
       return null;
+    }
+  }
+
+  /// ดึงรูปโปรไฟล์คนขับล่าสุดจาก Odoo
+  ///
+  /// คืน null เมื่อ "เซิร์ฟเวอร์บอกว่าคนนี้ไม่มีรูป" เท่านั้น
+  /// ถ้าเรียกไม่สำเร็จจะโยน Exception ไม่ใช่คืน null
+  ///
+  /// แยกสองกรณีนี้ให้ขาดจากกัน เพราะเคยคืน null ทั้งสองแบบ แล้วหน้าจอเอา
+  /// null ไปทับรูปที่โหลดมาตอน login จนรูปหายทุกครั้งที่เปิดแอปใหม่
+  Future<String?> getDriverImage(int driverId) async {
+    // ต้องมี session ก่อน ไม่งั้นเส้นทางโมดูลตอบ 404 (เซิร์ฟเวอร์มี 2 ฐาน)
+    if (_sessionId == null) {
+      await loadSessionFromPrefs();
+    }
+
+    final response = await http.post(
+      Uri.parse('$_baseUrl/api/driver/get_image'),
+      headers: {
+        'Content-Type': 'application/json',
+        if (_sessionId != null) 'Cookie': 'session_id=$_sessionId',
+      },
+      body: jsonEncode({
+        'jsonrpc': '2.0',
+        'method': 'call',
+        'params': {'driver_id': driverId},
+        'id': Random().nextInt(1000000),
+      }),
+    ).timeout(const Duration(seconds: 20));
+
+    if (response.statusCode != 200) {
+      throw Exception('ดึงรูปไม่สำเร็จ (HTTP ${response.statusCode})');
+    }
+    final data = jsonDecode(response.body);
+    if (data['error'] != null) {
+      throw Exception(data['error']['message'] ?? 'ดึงรูปไม่สำเร็จ');
+    }
+    final result = data['result'];
+    if (result is! Map || result['success'] != true) {
+      throw Exception((result is Map ? result['error'] : null) ??
+          'ดึงรูปไม่สำเร็จ');
+    }
+    final img = result['image'];
+    return (img is String && img.isNotEmpty) ? img : null;
+  }
+
+  /// อัปโหลดรูปโปรไฟล์ (หรือลบเมื่อส่ง base64Image = null)
+  ///
+  /// เขียนลงฟิลด์เดียวกับหน้า "ผู้ขับขี่" ใน Odoo รูปจึงขึ้นทั้งสองที่
+  /// คืนรูปขนาดย่อที่เซิร์ฟเวอร์ย่อให้แล้ว เพื่อเอาไปแสดงทันที
+  /// โยน Exception พร้อมข้อความจากเซิร์ฟเวอร์เมื่อไม่สำเร็จ ให้หน้าจอบอกผู้ใช้ได้
+  Future<String?> uploadDriverImage(int driverId, String? base64Image) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/api/driver/upload_image'),
+      headers: {
+        'Content-Type': 'application/json',
+        if (_sessionId != null) 'Cookie': 'session_id=$_sessionId',
+      },
+      body: jsonEncode({
+        'jsonrpc': '2.0',
+        'method': 'call',
+        'params': {'driver_id': driverId, 'image': base64Image},
+        'id': Random().nextInt(1000000),
+      }),
+    ).timeout(const Duration(seconds: 60));
+
+    if (response.statusCode != 200) {
+      throw Exception('เซิร์ฟเวอร์ตอบกลับ ${response.statusCode}');
+    }
+    final data = jsonDecode(response.body);
+    if (data['error'] != null) {
+      throw Exception(data['error']['data']?['message'] ??
+          data['error']['message'] ?? 'บันทึกรูปไม่สำเร็จ');
+    }
+    final result = data['result'];
+    if (result is! Map || result['success'] != true) {
+      throw Exception((result is Map ? result['error'] : null) ??
+          'บันทึกรูปไม่สำเร็จ');
+    }
+    final img = result['image'];
+    return (img is String && img.isNotEmpty) ? img : null;
+  }
+
+  /// ขอค่าเชื่อมต่อล่าสุดจาก Odoo แล้วจำไว้ใช้ตอนเปิดแอปครั้งถัดไป
+  ///
+  /// ใช้ปลายทางของโมดูล npd_connection_settings ที่มีอยู่แล้ว (เมนู
+  /// การตั้งค่า > บริษัท > ตั้งค่าการเชื่อมต่อ NPD) ซึ่งเก็บฟิลด์ชุดเดียวกับ
+  /// ตาราง MySQL ที่ PHP เคยอ่าน จึงไม่ต้องสร้างที่เก็บใหม่ให้ซ้ำซ้อน
+  ///
+  /// เรียกหลังล็อกอินสำเร็จเท่านั้น เพราะเส้นทางโมดูลบนเซิร์ฟเวอร์นี้ตอบ 404
+  /// ถ้าไม่มี session และค่าที่ได้มีรหัสผ่านอยู่ด้วย
+  ///
+  /// ล้มเหลวเงียบ ๆ ตั้งใจให้เป็นแบบนั้น — ค่าเดิมยังใช้ได้อยู่ ไม่มีเหตุผล
+  /// ที่จะไปขวางคนขับเริ่มงานเพราะเรื่องนี้
+  Future<void> refreshConnectionConfig() async {
+    try {
+      final response = await http.get(
+        Uri.parse('$_baseUrl/api/npd/connection/get_active'),
+        headers: {
+          'Accept': 'application/json',
+          if (_sessionId != null) 'Cookie': 'session_id=$_sessionId',
+        },
+      ).timeout(const Duration(seconds: 20));
+
+      if (response.statusCode != 200) return;
+      final data = jsonDecode(response.body);
+      if (data is! Map || data['success'] != true || data['data'] is! Map) {
+        print('[OdooService] ยังไม่ได้ตั้งค่าการเชื่อมต่อใน Odoo');
+        return;
+      }
+
+      final incoming = Map<String, dynamic>.from(data['data'] as Map);
+      final candidate = ConnectionConfig.fromJson(incoming);
+      if (!candidate.isUsable) return;
+
+      // ค่าเดิมใช้ได้อยู่แล้ว ถ้าค่าใหม่เหมือนเดิมก็ไม่ต้องทำอะไร
+      final current = OdooConfigHolder.getInstance().getConfig();
+      if (current != null &&
+          candidate.baseUrl.replaceAll(RegExp(r'/+$'), '') ==
+              current.baseUrl.replaceAll(RegExp(r'/+$'), '') &&
+          candidate.database == current.database &&
+          candidate.username == current.username) {
+        return;
+      }
+
+      // ⚠️ ต้องพิสูจน์ว่าค่าใหม่ล็อกอินได้จริงก่อนบันทึกทับ
+      // ถ้าใครพิมพ์ชื่อฐานข้อมูลผิดไว้ในหน้าตั้งค่า แล้วแอปจำค่านั้นไปเลย
+      // คนขับจะเปิดแอปไม่ได้อีกจนกว่าจะล้างข้อมูลแอปทิ้ง
+      if (!await _canAuthenticateWith(candidate)) {
+        print('[OdooService] ค่าใหม่จาก Odoo ล็อกอินไม่ผ่าน ไม่บันทึกทับ: '
+            '$candidate');
+        return;
+      }
+
+      await ConnectionService.saveConfigFromOdoo(incoming);
+    } catch (e) {
+      print('[OdooService] ข้ามการอัปเดตค่าเชื่อมต่อ: $e');
+    }
+  }
+
+  /// ลองล็อกอินด้วยค่าที่ได้มา เพื่อยืนยันว่าใช้ได้จริงก่อนจำไว้
+  Future<bool> _canAuthenticateWith(ConnectionConfig config) async {
+    try {
+      final base = config.baseUrl.replaceAll(RegExp(r'/+$'), '');
+      final response = await http.post(
+        Uri.parse('$base/web/session/authenticate'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'jsonrpc': '2.0',
+          'params': {
+            'db': config.database,
+            'login': config.username,
+            'password': config.password,
+          },
+        }),
+      ).timeout(const Duration(seconds: 20));
+
+      if (response.statusCode != 200) return false;
+      final data = jsonDecode(response.body);
+      return data is Map &&
+          data['error'] == null &&
+          data['result'] is Map &&
+          (data['result'] as Map)['uid'] != null;
+    } catch (e) {
+      print('[OdooService] ทดสอบค่าใหม่ไม่ผ่าน: $e');
+      return false;
     }
   }
 
@@ -462,6 +648,7 @@ class OdooService {
                 'pickup_longitude',
                 'destination_latitude',
                 'destination_longitude',
+                'shipment_purpose',
               ],
               'order': 'planned_start_date asc',
             },
@@ -682,6 +869,9 @@ class OdooService {
   Future<bool> startJobWithPhoto({
     required int bookingId,
     required String photoPath,
+    List<String> extraPhotoPaths = const [],
+    double? driverLatitude,
+    double? driverLongitude,
   }) async {
     try {
       print('📸 [StartJobWithPhoto] Starting for booking ID: $bookingId');
@@ -710,7 +900,21 @@ class OdooService {
       final base64Photo = base64Encode(photoBytes);
       print('✅ [StartJobWithPhoto] Photo encoded, size: ${base64Photo.length} characters (original: ${photoBytes.length} bytes)');
 
-      print('🌐 [StartJobWithPhoto] Uploading photo and starting job via Odoo XML-RPC...');
+      // รูปที่เหลือส่งไปกับ kwargs เพื่อไม่ให้กระทบลายเซ็นเดิมของเมธอดฝั่ง Odoo
+      // รูปไหนอ่านไม่ได้ก็ข้าม ไม่ควรทำให้เริ่มงานไม่ได้ทั้งเที่ยว
+      final List<String> extraBase64 = [];
+      for (final path in extraPhotoPaths) {
+        try {
+          final f = File(path);
+          if (!f.existsSync()) continue;
+          final bytes = await f.readAsBytes();
+          if (bytes.isEmpty) continue;
+          extraBase64.add(base64Encode(bytes));
+        } catch (e) {
+          print('⚠️ [StartJobWithPhoto] ข้ามรูป $path: $e');
+        }
+      }
+      print('🌐 [StartJobWithPhoto] Uploading ${1 + extraBase64.length} photo(s)...');
       
       // ใช้ Odoo XML-RPC API โดยตรง
       final response = await http.post(
@@ -726,7 +930,12 @@ class OdooService {
             'model': 'vehicle.booking',
             'method': 'start_job_with_photo',
             'args': [bookingId, base64Photo],
-            'kwargs': {},
+            'kwargs': {
+              'extra_photos': extraBase64,
+              // ส่งตำแหน่งจริงไปด้วย Odoo จะได้ไม่ต้องเดาจากพิกัดคลัง
+              if (driverLatitude != null) 'driver_latitude': driverLatitude,
+              if (driverLongitude != null) 'driver_longitude': driverLongitude,
+            },
           },
           'id': Random().nextInt(1000000),
         }),
@@ -774,8 +983,10 @@ class OdooService {
   Future<bool> completeDelivery({
     required int bookingId,
     required String deliveryPhotoPath,
+    List<String> extraDeliveryPhotoPaths = const [],
     required String signaturePath,
     required String receiverName,
+    required String receiverPosition,
     required bool signedBySelf,
     DateTime? deliveryTimestamp,
     double? deliveryLatitude,
@@ -820,7 +1031,19 @@ class OdooService {
       final base64Signature = base64Encode(signatureBytes);
       print('✅ [CompleteDelivery] Signature encoded, size: ${base64Signature.length} characters');
 
-      print('🌐 [CompleteDelivery] Sending data to server via REST API...');
+      final List<String> extraDeliveryPhotos = [];
+      for (final path in extraDeliveryPhotoPaths) {
+        try {
+          final f = File(path);
+          if (!f.existsSync()) continue;
+          final bytes = await f.readAsBytes();
+          if (bytes.isEmpty) continue;
+          extraDeliveryPhotos.add(base64Encode(bytes));
+        } catch (e) {
+          print('⚠️ [CompleteDelivery] ข้ามรูป $path: $e');
+        }
+      }
+      print('🌐 [CompleteDelivery] ส่งรูป ${1 + extraDeliveryPhotos.length} ใบ...');
       
       // ✅ ใช้ REST API endpoint เหมือนไฟล์เก่า (ใช้ JSON body แทน multipart)
       final response = await http.post(
@@ -835,8 +1058,10 @@ class OdooService {
           'params': {
             'booking_id': bookingId,
             'delivery_photo': base64Photo,
+            'delivery_photos': extraDeliveryPhotos,
             'receiver_signature': base64Signature,
             'receiver_name': receiverName,
+            'receiver_position': receiverPosition,
             'signed_by_self': signedBySelf,
             'planned_end_date_t': _formatDateTimeForOdoo(deliveryTimestamp ?? DateTime.now()),  // ✅ เพิ่มเวลาส่งจริง
             if (deliveryTimestamp != null) 'delivery_timestamp': _formatDateTimeForOdoo(deliveryTimestamp),
@@ -980,6 +1205,43 @@ class OdooService {
   ///
   /// ส่งทั้งใบในครั้งเดียว ไม่ยิงทีละรายการ เพราะคนขับอยู่หน้าคลัง
   /// สัญญาณไม่ดี ยิงหลายครั้งมีโอกาสค้างกลางทางแล้วสถานะไม่ตรงกัน
+  /// บันทึกหมายเหตุของเที่ยวช่วยสาขา (ใช้แทนการตรวจนับสินค้า)
+  ///
+  /// ยิงไปปลายทางเดียวกับการตรวจนับ ฝั่ง Odoo แยกเองว่าเที่ยวไหนใช้แบบไหน
+  Future<Map<String, dynamic>?> saveHelpBranchNote({
+    required int bookingId,
+    required String note,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/api/booking/check_products'),
+      headers: {
+        'Content-Type': 'application/json',
+        if (_sessionId != null) 'Cookie': 'session_id=$_sessionId',
+      },
+      body: jsonEncode({
+        'jsonrpc': '2.0',
+        'method': 'call',
+        'params': {'booking_id': bookingId, 'note': note},
+        'id': Random().nextInt(1000000),
+      }),
+    ).timeout(const Duration(seconds: 40));
+
+    if (response.statusCode != 200) {
+      throw Exception('เซิร์ฟเวอร์ตอบกลับ ${response.statusCode}');
+    }
+    final data = jsonDecode(response.body);
+    if (data['error'] != null) {
+      throw Exception(data['error']['data']?['message'] ??
+          data['error']['message'] ?? 'บันทึกหมายเหตุไม่สำเร็จ');
+    }
+    final result = data['result'];
+    if (result is! Map || result['success'] != true) {
+      throw Exception((result is Map ? result['error'] : null) ??
+          'บันทึกหมายเหตุไม่สำเร็จ');
+    }
+    return Map<String, dynamic>.from(result);
+  }
+
   Future<Map<String, dynamic>?> saveProductCheck({
     required int bookingId,
     required int driverId,

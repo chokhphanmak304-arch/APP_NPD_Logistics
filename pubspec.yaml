@@ -1,7 +1,7 @@
 name: npd_transport_app
 description: "NPD Logistics - ระบบจัดการการขนส่ง"
 publish_to: 'none'
-version: 1.1.6+21  # 🆕 UI ใหม่ + แจ้งเตือนงาน + popup อัปเดต + รายได้ตามรอบ
+version: 1.2.2+25  # + เชื่อมต่อ Odoo โดยตรง, แนบรูปได้ 10 รูป, หมายเหตุช่วยสาขา (AI ตรวจ), แก้กล้องช้าตอนกดถ่าย
 
 environment:
   sdk: ^3.8.0

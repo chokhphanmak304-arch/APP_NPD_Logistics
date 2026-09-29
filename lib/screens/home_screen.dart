@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import '../models/driver.dart';
 import '../services/odoo_service.dart';
 import '../services/update_service.dart';
@@ -29,6 +32,12 @@ class _HomeScreenState extends State<HomeScreen> {
   // ใช้เทียบจำนวนงานรอบก่อน เพื่อตรวจจับ "งานใหม่" (-1 = ยังไม่มี baseline)
   int _previousJobsCount = -1;
 
+  // รูปโปรไฟล์ เริ่มจากค่าที่ติดมาตอน login แล้วค่อยรีเฟรชจากเซิร์ฟเวอร์
+  // เก็บเป็น state แยก เพราะ widget.driver เป็น final แก้ไม่ได้ แต่คนขับ
+  // เปลี่ยนรูปแล้วต้องเห็นผลทันทีโดยไม่ต้อง login ใหม่
+  String? _avatarBase64;
+  bool _savingAvatar = false;
+
   // 🎨 พาเลตสีหลัก
   static const Color _primary = Color(0xFF2D6CDF);
   static const Color _primaryDark = Color(0xFF1E47B8);
@@ -36,13 +45,148 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _avatarBase64 = widget.driver.imageBase64;
     _initNotifications();
     _loadPendingJobsCount();
+    _refreshAvatar();
     _startAutoRefresh();
     // 🔔 เช็คอัปเดตเวอร์ชันจาก Google Play หลังเฟรมแรกพร้อม
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) UpdateService.checkForUpdate(context);
     });
+  }
+
+  /// ดึงรูปล่าสุดจาก Odoo เผื่อมีคนไปเปลี่ยนให้จากฝั่งหลังบ้าน
+  ///
+  /// รีเฟรชพลาดแล้วต้องไม่ลบรูปที่มีอยู่ทิ้ง เพราะรูปที่ได้มาตอน login ก็ถูก
+  /// อยู่แล้ว การลบทิ้งทำให้คนขับเห็นรูปหายทุกครั้งที่เน็ตสะดุดตอนเปิดแอป
+  Future<void> _refreshAvatar() async {
+    try {
+      final img = await _odooService.getDriverImage(widget.driver.id);
+      if (!mounted) return;
+      // อย่าเขียนทับระหว่างที่ผู้ใช้กำลังอัปโหลดรูปใหม่อยู่ ไม่งั้นรูปเก่า
+      // จะเด้งกลับมาทับรูปที่เพิ่งเลือก
+      if (_savingAvatar) return;
+      if (img != _avatarBase64) setState(() => _avatarBase64 = img);
+    } catch (e) {
+      // เงียบไว้ รูปเดิมยังแสดงอยู่ ไม่มีอะไรต้องให้คนขับทำ
+      debugPrint('[HomeScreen] รีเฟรชรูปโปรไฟล์ไม่สำเร็จ: $e');
+    }
+  }
+
+  Future<void> _showAvatarSheet() async {
+    final hasImage = _avatarBase64 != null;
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'รูปโปรไฟล์',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('ถ่ายรูปใหม่'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _pickAvatar(ImageSource.camera);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('เลือกจากคลังรูป'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _pickAvatar(ImageSource.gallery);
+              },
+            ),
+            if (hasImage)
+              ListTile(
+                leading:
+                    const Icon(Icons.delete_outline, color: Color(0xFFDC2626)),
+                title: const Text('ลบรูปโปรไฟล์',
+                    style: TextStyle(color: Color(0xFFDC2626))),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _saveAvatar(null);
+                },
+              ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickAvatar(ImageSource source) async {
+    try {
+      // ย่อตั้งแต่ต้นทาง รูปกล้องเต็มความละเอียดอัปโหลดช้ามาก และคนขับ
+      // ส่วนใหญ่ใช้เน็ตมือถือระหว่างวิ่งงาน
+      final picked = await ImagePicker().pickImage(
+        source: source,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 85,
+      );
+      if (picked == null) return;
+      final bytes = await File(picked.path).readAsBytes();
+      await _saveAvatar(base64Encode(bytes));
+    } catch (e) {
+      if (mounted) _showAvatarMessage('เปิดรูปไม่สำเร็จ', isError: true);
+    }
+  }
+
+  Future<void> _saveAvatar(String? base64Image) async {
+    setState(() => _savingAvatar = true);
+    try {
+      final saved =
+          await _odooService.uploadDriverImage(widget.driver.id, base64Image);
+      if (!mounted) return;
+      setState(() {
+        _avatarBase64 = saved;
+        _savingAvatar = false;
+      });
+      _showAvatarMessage(
+          base64Image == null ? 'ลบรูปโปรไฟล์แล้ว' : 'บันทึกรูปโปรไฟล์แล้ว');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _savingAvatar = false);
+      _showAvatarMessage(e.toString().replaceFirst('Exception: ', ''),
+          isError: true);
+    }
+  }
+
+  void _showAvatarMessage(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor:
+            isError ? const Color(0xFFDC2626) : const Color(0xFF16A34A),
+      ),
+    );
   }
 
   Future<void> _initNotifications() async {
@@ -235,11 +379,7 @@ class _HomeScreenState extends State<HomeScreen> {
             // แถวทักทาย
             Row(
               children: [
-                CircleAvatar(
-                  radius: 26,
-                  backgroundColor: Colors.white.withOpacity(0.22),
-                  child: const Icon(Icons.person, color: Colors.white, size: 30),
-                ),
+                _buildAvatar(),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(
@@ -271,6 +411,62 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// วงกลมรูปโปรไฟล์ กดเพื่อเปลี่ยน มีป้ายกล้องมุมล่างบอกว่ากดได้
+  Widget _buildAvatar() {
+    final bytes = _avatarBase64;
+    return GestureDetector(
+      onTap: _savingAvatar ? null : _showAvatarSheet,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          CircleAvatar(
+            radius: 26,
+            backgroundColor: Colors.white.withOpacity(0.22),
+            backgroundImage:
+                bytes != null ? MemoryImage(base64Decode(bytes)) : null,
+            child: bytes != null
+                ? null
+                : const Icon(Icons.person, color: Colors.white, size: 30),
+          ),
+          if (_savingAvatar)
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.35),
+                  shape: BoxShape.circle,
+                ),
+                child: const Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(Colors.white),
+                    ),
+                  ),
+                ),
+              ),
+            )
+          else
+            Positioned(
+              right: -2,
+              bottom: -2,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: _primary, width: 1.5),
+                ),
+                child: const Icon(Icons.photo_camera,
+                    size: 12, color: _primary),
+              ),
+            ),
+        ],
       ),
     );
   }

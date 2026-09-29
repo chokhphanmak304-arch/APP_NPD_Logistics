@@ -94,6 +94,7 @@ class BackgroundLocationService {
   // ดึง tracking interval จาก Odoo
   static Future<double> _getTrackingInterval() async {
     try {
+      await OdooService.ensureConfigLoaded();
       final odoo = OdooService();
       await odoo.loadSessionFromPrefs();
       final settings = await odoo.getTrackingSettings();
@@ -167,6 +168,7 @@ class BackgroundLocationService {
       }
 
       // ส่งไป Odoo
+      await OdooService.ensureConfigLoaded();
       final odoo = OdooService();
       await odoo.loadSessionFromPrefs();
       

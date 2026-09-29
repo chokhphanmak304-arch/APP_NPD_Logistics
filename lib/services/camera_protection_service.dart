@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 
 /// Helper class to protect app from being killed during camera usage
@@ -42,14 +44,20 @@ class CameraProtectionService {
   /// ```
   static Future<T?> withProtection<T>(Future<T?> Function() cameraOperation) async {
     await startProtection();
-    
+
     try {
-      final result = await cameraOperation();
-      return result;
+      return await cameraOperation();
     } finally {
-      // Always stop protection, even if camera operation fails
-      await Future.delayed(Duration(milliseconds: 500)); // Give time for camera to close
-      await stopProtection();
+      // ปิด foreground service ทีหลังโดยไม่ให้ผู้ใช้ต้องรอ
+      //
+      // เดิม await Future.delayed(500ms) แล้วค่อย await stopProtection()
+      // อยู่ใน finally ซึ่งทำงานก่อนค่าจะถูกส่งกลับ ผลคือกดชัตเตอร์แล้วรูป
+      // ยังไม่ขึ้นอีกอย่างน้อยครึ่งวินาที บวกเวลาปิด service อีก
+      //
+      // การหน่วงมีไว้ให้กล้องปิดสนิทก่อนถอด service ซึ่งไม่เกี่ยวกับการคืนค่า
+      // จึงปล่อยให้ทำงานเบื้องหลังได้ ไม่ต้องขวางหน้าจอ
+      unawaited(Future.delayed(const Duration(milliseconds: 500))
+          .then((_) => stopProtection()));
     }
   }
 }

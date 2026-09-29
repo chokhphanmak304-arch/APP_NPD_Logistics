@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12 ขึ้นไป + เครื่องตั้งโหมดมืด = เคสที่เจอปัญหาจริง
+
+         ต้องมีโฟลเดอร์นี้แยก เพราะ Android จัดลำดับ qualifier "night" สูงกว่า
+         "v31" ถ้ามีแต่ values-v31 เครื่องธีมมืดจะไปหยิบ values-night มาใช้แทน
+         แล้วไม่ได้ค่า windowSplashScreenBackground ที่ตั้งไว้ -->
+    <style name="LaunchTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@drawable/launch_background</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_background</item>
+    </style>
+
+    <style name="NormalTheme" parent="@android:style/Theme.Light.NoTitleBar">
+        <item name="android:windowBackground">@color/splash_background</item>
+    </style>
+</resources>
